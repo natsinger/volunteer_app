@@ -1,0 +1,5 @@
+{
+  "name": "VolunteerFlow",
+  "description": "An intelligent volunteer management system featuring admin dashboards, shift scheduling, and AI-powered roster generation.",
+  "requestFramePermissions": []
+}
