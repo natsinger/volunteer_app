@@ -139,98 +139,187 @@ export const generateScheduleAI = async (
     location: s.location || 'BOTH', // Use actual shift location field
   }));
 
-  const prompt = `
-    Role: You are a strict logic engine for scheduling.
-    Task: Create a volunteer schedule for ${targetMonth}/${targetYear}.
+/**
+ * Deterministic scheduling algorithm that fills ALL shifts
+ * Prioritizes novices first, saves experts for last
+ * Does multiple passes until all shifts are filled or no capacity remains
+ */
+function scheduleShiftsMultiPass(
+  volunteers: Volunteer[],
+  shifts: Shift[]
+): Array<{shiftId: string, volunteerId: string, reasoning: string}> {
 
-    *** CRITICAL HARD CONSTRAINTS (ZERO TOLERANCE) ***
-    
-    1. **MAXIMUM CAPACITY (The most important rule)**: 
-       - You MUST NOT assign a volunteer more shifts than their 'monthlyCapacity'.
-       - Example: If monthlyCapacity is 2, assigning 3 shifts is a CRITICAL ERROR.
-       - It is BETTER to leave a shift empty than to over-assign a volunteer.
+  const assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}> = [];
 
-    2. **PREFERRED DAYS**:
-       - Volunteers can ONLY work on days listed in their 'preferredDays' array.
-       - '0'=Sunday, '1'=Monday, '2_evening'=Tuesday PM, etc.
-       - You must match the shift's 'dayCode' exactly to one of the volunteer's preferred days.
+  // Track capacity usage
+  const capacityUsed = new Map<string, number>();
+  volunteers.forEach(v => capacityUsed.set(v.id, 0));
 
-    3. **LOCATION**:
-       - 'HATACHANA' volunteers -> Hatachana shifts only.
-       - 'DIZENGOFF' volunteers -> Dizengoff shifts only.
-       - 'BOTH' -> Any shift.
+  // Track assignments per shift
+  const shiftAssignments = new Map<string, string[]>();
+  shifts.forEach(s => shiftAssignments.set(s.id, []));
 
-    4. **DATES**:
-       - Do not assign on 'blackoutDates'.
-       - If 'onlyDates' is present, they can ONLY work on those specific dates.
+  // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
+  // Within same skill level, sort by capacity (higher capacity first)
+  const sortedVolunteers = [...volunteers].sort((a, b) => {
+    if (a.skillLevel !== b.skillLevel) {
+      return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
+    }
+    return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
+  });
 
-    *** SCHEDULING ALGORITHM ***
+  console.log('Volunteer priority order (novices first):');
+  sortedVolunteers.forEach((v, i) => {
+    const skillLabel = v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
+    console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${getMonthlyCapacity(v.frequency)})`);
+  });
 
-    Step 1: Calculate Total Slots
-    - Aim for 3 volunteers per shift. Min is 2. Max is 5.
-    
-    Step 2: Assign
-    - Iterate through shifts chronologically.
-    - For each shift, find volunteers who match Location AND Day AND Date constraints.
-    - **CRITICAL FILTER**: Exclude any volunteer who has already reached their 'monthlyCapacity'.
-    - Assign up to 3 volunteers.
-    
-    Step 3: Verification
-    - Count assignments for each volunteer.
-    - If any volunteer has > monthlyCapacity, REMOVE their extra assignments immediately.
+  // Helper: Check if volunteer can work this shift
+  const canWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
+    const capacity = getMonthlyCapacity(volunteer.frequency);
+    const used = capacityUsed.get(volunteer.id) || 0;
 
-    Data:
-    Volunteers: ${JSON.stringify(enrichedVolunteers)}
-    Shifts: ${JSON.stringify(enrichedShifts)}
+    // Check capacity
+    if (used >= capacity) return false;
 
-    Output:
-    Return a JSON object with a list of assignments.
-  `;
+    // Check location
+    if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
+      if (volunteer.preferredLocation !== shift.location) return false;
+    }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            assignments: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  shiftId: { type: Type.STRING },
-                  volunteerId: { type: Type.STRING },
-                  reasoning: { type: Type.STRING }
-                },
-                required: ['shiftId', 'volunteerId']
-              }
-            }
-          }
-        }
-      }
+    // Check day preference
+    const dayCode = getShiftDayCode(shift.date, shift.startTime);
+    if (!volunteer.preferredDays.includes(dayCode)) return false;
+
+    // Check blackout dates
+    if (volunteer.blackoutDates.includes(shift.date)) return false;
+
+    // Check only dates
+    if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  // Multiple passes: keep going until all shifts are filled or no capacity remains
+  let passNumber = 1;
+  let assignmentsMade = true;
+
+  while (assignmentsMade) {
+    assignmentsMade = false;
+    console.log(`\n=== Pass ${passNumber} ===`);
+
+    // Sort shifts by how many volunteers they have (fewest first)
+    const sortedShifts = [...shifts].sort((a, b) => {
+      const aCount = shiftAssignments.get(a.id)?.length || 0;
+      const bCount = shiftAssignments.get(b.id)?.length || 0;
+      if (aCount !== bCount) return aCount - bCount;
+      return a.date.localeCompare(b.date); // Earlier dates first
     });
 
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    const rawAssignments = data.assignments || [];
+    for (const shift of sortedShifts) {
+      const currentAssignees = shiftAssignments.get(shift.id) || [];
 
-    console.log(`AI returned ${rawAssignments.length} assignments`);
+      // Target: 3 volunteers per shift, max 5
+      if (currentAssignees.length >= 5) continue;
 
-    // CRITICAL: Enforce strict capacity limits
-    // The AI may ignore constraints, so we validate and fix assignments here
-    const validAssignments = enforceCapacityLimits(rawAssignments, activeVolunteers, targetShifts);
+      // Try to assign volunteers (in priority order: novices first)
+      for (const volunteer of sortedVolunteers) {
+        // Skip if already assigned to this shift
+        if (currentAssignees.includes(volunteer.id)) continue;
 
-    console.log(`After capacity enforcement: ${validAssignments.length} valid assignments`);
+        // Check if volunteer can work this shift
+        if (!canWorkShift(volunteer, shift)) continue;
 
-    return validAssignments;
+        // Assign!
+        assignments.push({
+          shiftId: shift.id,
+          volunteerId: volunteer.id,
+          reasoning: `Pass ${passNumber}: ${volunteer.name} (skill ${volunteer.skillLevel}) assigned to ${shift.date}`
+        });
 
-  } catch (error) {
-    console.error("Gemini Scheduling Error:", error);
-    throw error;
+        currentAssignees.push(volunteer.id);
+        shiftAssignments.set(shift.id, currentAssignees);
+        capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
+        assignmentsMade = true;
+
+        // If shift has 3 volunteers, move to next shift
+        if (currentAssignees.length >= 3) break;
+      }
+    }
+
+    passNumber++;
+
+    // Safety: max 10 passes
+    if (passNumber > 10) {
+      console.warn('Reached maximum passes (10), stopping');
+      break;
+    }
   }
+
+  // Report results
+  console.log('\n=== Final Results ===');
+  console.log(`Total assignments: ${assignments.length}`);
+  console.log('Per volunteer:');
+  capacityUsed.forEach((used, volId) => {
+    const volunteer = volunteers.find(v => v.id === volId);
+    const capacity = getMonthlyCapacity(volunteer?.frequency || '');
+    if (used > 0) {
+      console.log(`  ${volunteer?.name}: ${used}/${capacity} (${Math.round(used/capacity*100)}%)`);
+    }
+  });
+
+  console.log('Per shift:');
+  let emptyShifts = 0;
+  shiftAssignments.forEach((assignees, shiftId) => {
+    if (assignees.length === 0) emptyShifts++;
+  });
+  console.log(`  ${shifts.length - emptyShifts}/${shifts.length} shifts filled`);
+  console.log(`  ${emptyShifts} shifts remain empty`);
+
+  return assignments;
+}
+
+export const generateScheduleAI = async (
+  volunteers: Volunteer[],
+  shifts: Shift[],
+  targetMonth: number, // 1-12
+  targetYear: number
+) => {
+  if (!apiKey) {
+    throw new Error("API Key is missing. Please check your environment configuration.");
+  }
+
+  // Filter only active volunteers
+  const activeVolunteers = volunteers.filter(v => v.availabilityStatus === 'Active');
+
+  // Filter open shifts SPECIFICALLY for the target month and year
+  const targetShifts = shifts.filter(s => {
+    const d = new Date(s.date);
+    return s.status === 'Open' &&
+           d.getMonth() + 1 === targetMonth &&
+           d.getFullYear() === targetYear;
+  });
+
+  if (activeVolunteers.length === 0) {
+    throw new Error("No active volunteers found.");
+  }
+
+  if (targetShifts.length === 0) {
+    throw new Error(`No open shifts found for ${targetMonth}/${targetYear}. Please check your shift calendar.`);
+  }
+
+  console.log(`\n🔄 Starting deterministic scheduling:`);
+  console.log(`  Volunteers: ${activeVolunteers.length} active`);
+  console.log(`  Shifts: ${targetShifts.length} open shifts`);
+
+  // Use deterministic multi-pass algorithm instead of AI
+  const validAssignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts);
+
+  console.log(`\n✅ Scheduling complete: ${validAssignments.length} assignments created`);
+
+  return validAssignments;
 };
 
 export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunteer>[]> => {
