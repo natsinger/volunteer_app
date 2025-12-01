@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { 
-  Users, Calendar, Sparkles, Plus, Trash2, Edit2, 
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User 
+import {
+  Users, Calendar, Sparkles, Plus, Trash2, Edit2,
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User
 } from 'lucide-react';
 import { Volunteer, Shift } from '../types';
 import { generateScheduleAI, getMonthlyCapacity } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
+import { supabase } from '../lib/supabase';
+import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB } from '../lib/mappers';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -75,20 +77,48 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // We need a place to store the assignments since the Shift type is 1-to-1
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
 
-  const handleAddShift = () => {
+  const handleAddShift = async () => {
     if (!newShift.title || !newShift.date) return;
-    const shift: Shift = {
-      id: `s-${Date.now()}`,
-      title: newShift.title,
-      date: newShift.date,
-      startTime: newShift.startTime || '09:00',
-      endTime: newShift.endTime || '17:00',
-      requiredSkills: [], 
-      status: 'Open',
-      assignedVolunteerId: null
-    };
-    setShifts([...shifts, shift]);
-    setNewShift({ title: '', date: '', startTime: '', endTime: '', requiredSkills: [] });
+
+    try {
+      const shift: Shift = {
+        id: `s-${Date.now()}`,
+        title: newShift.title,
+        date: newShift.date,
+        startTime: newShift.startTime || '09:00',
+        endTime: newShift.endTime || '17:00',
+        requiredSkills: [],
+        status: 'Open',
+        assignedVolunteerId: null
+      };
+
+      // Convert shift to database format and remove id (let Supabase generate it)
+      const dbShift = mapShiftToDB(shift);
+      const { id, ...shiftWithoutId } = dbShift;
+
+      // Insert shift into Supabase
+      const { data, error } = await supabase
+        .from('shifts')
+        .insert([shiftWithoutId])
+        .select();
+
+      if (error) {
+        console.error('Error inserting shift:', error);
+        alert(`Failed to create shift: ${error.message}`);
+        return;
+      }
+
+      // Map returned data and update local state
+      if (data && data.length > 0) {
+        const savedShift = mapShiftFromDB(data[0]);
+        setShifts([...shifts, savedShift]);
+      }
+
+      setNewShift({ title: '', date: '', startTime: '', endTime: '', requiredSkills: [] });
+    } catch (err) {
+      console.error('Unexpected error during shift creation:', err);
+      alert('An unexpected error occurred while creating shift');
+    }
   };
 
   const requestDeleteShift = (id: string, title: string) => {
@@ -99,35 +129,119 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setDeleteConfirmation({ type: 'volunteer', id, name });
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteConfirmation) return;
 
-    if (deleteConfirmation.type === 'volunteer') {
-      const id = deleteConfirmation.id;
-      setVolunteers(prev => prev.filter(v => v.id !== id));
-      // Remove from generated assignments
-      setGeneratedAssignments(prev => prev.filter(a => a.volunteerId !== id));
-    } else if (deleteConfirmation.type === 'shift') {
-      const id = deleteConfirmation.id;
-      setShifts(prev => prev.filter(s => s.id !== id));
-      setGeneratedAssignments(prev => prev.filter(a => a.shiftId !== id));
+    try {
+      if (deleteConfirmation.type === 'volunteer') {
+        const id = deleteConfirmation.id;
+
+        // Delete from Supabase
+        const { error } = await supabase
+          .from('volunteers')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          console.error('Error deleting volunteer:', error);
+          alert(`Failed to delete volunteer: ${error.message}`);
+          return;
+        }
+
+        // Update local state
+        setVolunteers(prev => prev.filter(v => v.id !== id));
+        // Remove from generated assignments
+        setGeneratedAssignments(prev => prev.filter(a => a.volunteerId !== id));
+      } else if (deleteConfirmation.type === 'shift') {
+        const id = deleteConfirmation.id;
+
+        // Delete from Supabase
+        const { error } = await supabase
+          .from('shifts')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          console.error('Error deleting shift:', error);
+          alert(`Failed to delete shift: ${error.message}`);
+          return;
+        }
+
+        // Update local state
+        setShifts(prev => prev.filter(s => s.id !== id));
+        setGeneratedAssignments(prev => prev.filter(a => a.shiftId !== id));
+      }
+
+      setDeleteConfirmation(null);
+    } catch (err) {
+      console.error('Unexpected error during delete:', err);
+      alert('An unexpected error occurred while deleting');
     }
-    
-    setDeleteConfirmation(null);
   };
 
-  const handleBulkUpload = (newVols: Volunteer[]) => {
-    setVolunteers(prev => [...prev, ...newVols]);
+  const handleBulkUpload = async (newVols: Volunteer[]) => {
+    try {
+      // Convert volunteers to database format
+      const dbVolunteers = newVols.map(v => {
+        const dbVol = mapVolunteerToDB(v);
+        // Remove the id field to let Supabase generate it
+        const { id, ...volunteerWithoutId } = dbVol;
+        return volunteerWithoutId;
+      });
+
+      // Insert volunteers into Supabase
+      const { data, error } = await supabase
+        .from('volunteers')
+        .insert(dbVolunteers)
+        .select();
+
+      if (error) {
+        console.error('Error inserting volunteers:', error);
+        alert(`Failed to save volunteers: ${error.message}`);
+        return;
+      }
+
+      // Map returned data back to Volunteer format and update local state
+      if (data) {
+        const savedVolunteers = data.map(mapVolunteerFromDB);
+        setVolunteers(prev => [...prev, ...savedVolunteers]);
+      }
+    } catch (err) {
+      console.error('Unexpected error during bulk upload:', err);
+      alert('An unexpected error occurred while saving volunteers');
+    }
   };
 
   const handleSkillLevelChange = (id: string, level: 1 | 2 | 3) => {
     setVolunteers(prev => prev.map(v => v.id === id ? { ...v, skillLevel: level } : v));
   };
 
-  const handleSaveVolunteerEdit = () => {
+  const handleSaveVolunteerEdit = async () => {
     if (!editingVolunteer) return;
-    setVolunteers(prev => prev.map(v => v.id === editingVolunteer.id ? editingVolunteer : v));
-    setEditingVolunteer(null);
+
+    try {
+      // Convert volunteer to database format
+      const dbVolunteer = mapVolunteerToDB(editingVolunteer);
+
+      // Update in Supabase
+      const { error } = await supabase
+        .from('volunteers')
+        .update(dbVolunteer)
+        .eq('id', editingVolunteer.id);
+
+      if (error) {
+        console.error('Error updating volunteer:', error);
+        alert(`Failed to update volunteer: ${error.message}`);
+        return;
+      }
+
+      // Update local state
+      setVolunteers(prev => prev.map(v => v.id === editingVolunteer.id ? editingVolunteer : v));
+      setEditingVolunteer(null);
+    } catch (err) {
+      console.error('Unexpected error during update:', err);
+      alert('An unexpected error occurred while updating volunteer');
+    }
   };
 
   const filteredVolunteers = volunteers.filter(v => 
