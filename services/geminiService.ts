@@ -31,8 +31,68 @@ const getShiftDayCode = (dateStr: string, timeStr: string): string => {
   return day.toString();
 };
 
+/**
+ * Enforce strict capacity limits on assignments
+ * Removes excess assignments if any volunteer exceeds their capacity
+ */
+function enforceCapacityLimits(
+  assignments: Array<{shiftId: string, volunteerId: string, reasoning?: string}>,
+  volunteers: Volunteer[],
+  shifts: Shift[]
+): Array<{shiftId: string, volunteerId: string, reasoning?: string}> {
+
+  // Create capacity map
+  const capacityMap = new Map<string, number>();
+  volunteers.forEach(v => {
+    capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
+  });
+
+  // Count assignments per volunteer
+  const assignmentCounts = new Map<string, number>();
+  const validAssignments: typeof assignments = [];
+
+  // Sort shifts by date to prioritize earlier shifts
+  const shiftDateMap = new Map<string, string>();
+  shifts.forEach(s => shiftDateMap.set(s.id, s.date));
+
+  const sortedAssignments = [...assignments].sort((a, b) => {
+    const dateA = shiftDateMap.get(a.shiftId) || '';
+    const dateB = shiftDateMap.get(b.shiftId) || '';
+    return dateA.localeCompare(dateB);
+  });
+
+  // Process assignments in order, enforcing capacity
+  for (const assignment of sortedAssignments) {
+    const volunteerId = assignment.volunteerId;
+    const capacity = capacityMap.get(volunteerId) || 0;
+    const currentCount = assignmentCounts.get(volunteerId) || 0;
+
+    if (currentCount < capacity) {
+      validAssignments.push(assignment);
+      assignmentCounts.set(volunteerId, currentCount + 1);
+    } else {
+      console.warn(`Skipping assignment for ${volunteerId}: already at capacity (${capacity})`);
+    }
+  }
+
+  // Log enforcement results
+  console.log('Capacity Enforcement Results:');
+  assignmentCounts.forEach((count, volunteerId) => {
+    const capacity = capacityMap.get(volunteerId) || 0;
+    const volunteer = volunteers.find(v => v.id === volunteerId);
+    console.log(`  ${volunteer?.name}: ${count}/${capacity} assignments`);
+  });
+
+  const removed = assignments.length - validAssignments.length;
+  if (removed > 0) {
+    console.warn(`Removed ${removed} assignments that exceeded capacity limits`);
+  }
+
+  return validAssignments;
+}
+
 export const generateScheduleAI = async (
-  volunteers: Volunteer[], 
+  volunteers: Volunteer[],
   shifts: Shift[],
   targetMonth: number, // 1-12
   targetYear: number
@@ -47,8 +107,8 @@ export const generateScheduleAI = async (
   // Filter open shifts SPECIFICALLY for the target month and year
   const targetShifts = shifts.filter(s => {
     const d = new Date(s.date);
-    return s.status === 'Open' && 
-           d.getMonth() + 1 === targetMonth && 
+    return s.status === 'Open' &&
+           d.getMonth() + 1 === targetMonth &&
            d.getFullYear() === targetYear;
   });
 
@@ -76,7 +136,7 @@ export const generateScheduleAI = async (
     dayCode: getShiftDayCode(s.date, s.startTime),
     date: s.date,
     time: s.startTime,
-    location: s.id.toLowerCase().includes('dizengoff') || s.title.toLowerCase().includes('dizengoff') ? 'DIZENGOFF' : 'HATACHANA',
+    location: s.location || 'BOTH', // Use actual shift location field
   }));
 
   const prompt = `
@@ -155,7 +215,17 @@ export const generateScheduleAI = async (
 
     const jsonText = response.text || "{}";
     const data = JSON.parse(jsonText);
-    return data.assignments || [];
+    const rawAssignments = data.assignments || [];
+
+    console.log(`AI returned ${rawAssignments.length} assignments`);
+
+    // CRITICAL: Enforce strict capacity limits
+    // The AI may ignore constraints, so we validate and fix assignments here
+    const validAssignments = enforceCapacityLimits(rawAssignments, activeVolunteers, targetShifts);
+
+    console.log(`After capacity enforcement: ${validAssignments.length} valid assignments`);
+
+    return validAssignments;
 
   } catch (error) {
     console.error("Gemini Scheduling Error:", error);
