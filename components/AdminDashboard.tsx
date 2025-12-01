@@ -9,6 +9,7 @@ import BulkUploadModal from './BulkUploadModal';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
+import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -162,8 +163,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setRecurringShifts([...recurringShifts, savedRecurringShift]);
       }
 
+      // Generate shift instances for the next 3 months
+      console.log('Generating shift instances for the next 3 months...');
+      const generateResult = await generateShiftsForNextMonths(3);
+
+      if (generateResult.success) {
+        console.log(`Generated ${generateResult.totalCount} shift instances`);
+        // Reload shifts from database
+        const { data: shiftsData } = await supabase
+          .from('shifts')
+          .select('*')
+          .order('date', { ascending: true });
+        if (shiftsData) {
+          setShifts(shiftsData.map(mapShiftFromDB));
+        }
+      } else {
+        console.error('Failed to generate shifts:', generateResult.error);
+      }
+
       // Reset form
       setNewRecurringShift({ title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1 });
+
+      alert(`Recurring shift created! Generated ${generateResult.totalCount || 0} shift instances for the next 3 months.`);
     } catch (err) {
       console.error('Unexpected error during recurring shift creation:', err);
       alert('An unexpected error occurred while creating recurring shift');
