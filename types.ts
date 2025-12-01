@@ -15,15 +15,35 @@ export interface Volunteer {
   serialNumber?: number;
 }
 
+export interface RecurringShift {
+  id: string;
+  title: string;
+  dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sunday, 1=Monday, etc.
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  location: 'HATACHANA' | 'DIZENGOFF' | 'BOTH' | string;
+  requiredSkills: string[];
+  requiredVolunteers: number;
+  isActive: boolean;
+}
+
 export interface Shift {
   id: string;
+  recurringShiftId?: string | null; // Links to RecurringShift
   title: string;
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm
   endTime: string; // HH:mm
+  location?: string;
   requiredSkills: string[];
   assignedVolunteerId?: string | null;
   status: 'Open' | 'Assigned' | 'Completed';
+}
+
+export interface DeletedShiftOccurrence {
+  id: string;
+  recurringShiftId: string;
+  deletedDate: string; // YYYY-MM-DD
 }
 
 export interface ScheduleGenerationResult {

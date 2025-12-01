@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User
 } from 'lucide-react';
-import { Volunteer, Shift } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence } from '../types';
 import { generateScheduleAI, getMonthlyCapacity } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import { supabase } from '../lib/supabase';
-import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB } from '../lib/mappers';
+import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
+import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -26,21 +27,26 @@ const DAYS = [
   { id: '5', label: 'Fri' },
 ];
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
-  volunteers, shifts, setVolunteers, setShifts 
+const AdminDashboard: React.FC<AdminDashboardProps> = ({
+  volunteers, shifts, setVolunteers, setShifts
 }) => {
   const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto'>('volunteers');
   const [isGenerating, setIsGenerating] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [scheduleResultView, setScheduleResultView] = useState<'none' | 'calendar' | 'stats'>('none');
-  
+
   // Volunteer Management State
   const [searchTerm, setSearchTerm] = useState('');
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
-  
-  // Shift Management State
-  const [newShift, setNewShift] = useState<Partial<Shift>>({
-    title: '', date: '', startTime: '', endTime: '', requiredSkills: []
+
+  // Recurring Shift Management State
+  const [recurringShifts, setRecurringShifts] = useState<RecurringShift[]>([]);
+  const [deletedOccurrences, setDeletedOccurrences] = useState<DeletedShiftOccurrence[]>([]);
+  const [displayedShifts, setDisplayedShifts] = useState<Shift[]>([]);
+
+  // New Recurring Shift State (changed from date to dayOfWeek)
+  const [newRecurringShift, setNewRecurringShift] = useState<Partial<RecurringShift>>({
+    title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1
   });
 
   // Calendar Details State
@@ -54,6 +60,47 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
   const [targetMonth, setTargetMonth] = useState<number>(nextMonth.getMonth() + 1); // 1-12
   const [targetYear, setTargetYear] = useState<number>(nextMonth.getFullYear());
+
+  // Load recurring shifts and deleted occurrences on mount
+  useEffect(() => {
+    loadRecurringShifts();
+    loadDeletedOccurrences();
+  }, []);
+
+  // Generate displayed shifts whenever data changes
+  useEffect(() => {
+    const { start, end } = getMonthRange(targetYear, targetMonth - 1);
+    const generatedShifts = generateShiftInstances(recurringShifts, deletedOccurrences, start, end);
+    const merged = mergeShifts(generatedShifts, shifts);
+    setDisplayedShifts(merged);
+  }, [recurringShifts, deletedOccurrences, shifts, targetMonth, targetYear]);
+
+  const loadRecurringShifts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('recurring_shifts')
+        .select('*')
+        .order('day_of_week', { ascending: true });
+
+      if (error) throw error;
+      setRecurringShifts((data || []).map(mapRecurringShiftFromDB));
+    } catch (error) {
+      console.error('Error loading recurring shifts:', error);
+    }
+  };
+
+  const loadDeletedOccurrences = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('deleted_shift_occurrences')
+        .select('*');
+
+      if (error) throw error;
+      setDeletedOccurrences((data || []).map(mapDeletedOccurrenceFromDB));
+    } catch (error) {
+      console.error('Error loading deleted occurrences:', error);
+    }
+  };
 
   const handleGenerateSchedule = async () => {
     setIsGenerating(true);
@@ -77,47 +124,49 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // We need a place to store the assignments since the Shift type is 1-to-1
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
 
-  const handleAddShift = async () => {
-    if (!newShift.title || !newShift.date) return;
+  const handleAddRecurringShift = async () => {
+    if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
 
     try {
-      const shift: Shift = {
-        id: `s-${Date.now()}`,
-        title: newShift.title,
-        date: newShift.date,
-        startTime: newShift.startTime || '09:00',
-        endTime: newShift.endTime || '17:00',
+      const recurringShift: RecurringShift = {
+        id: `rs-${Date.now()}`,
+        title: newRecurringShift.title,
+        dayOfWeek: newRecurringShift.dayOfWeek as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+        startTime: newRecurringShift.startTime || '09:00',
+        endTime: newRecurringShift.endTime || '17:00',
+        location: newRecurringShift.location || 'BOTH',
         requiredSkills: [],
-        status: 'Open',
-        assignedVolunteerId: null
+        requiredVolunteers: newRecurringShift.requiredVolunteers || 1,
+        isActive: true,
       };
 
-      // Convert shift to database format and remove id (let Supabase generate it)
-      const dbShift = mapShiftToDB(shift);
-      const { id, ...shiftWithoutId } = dbShift;
+      // Convert to database format and remove id (let Supabase generate it)
+      const dbRecurringShift = mapRecurringShiftToDB(recurringShift);
+      const { id, ...shiftWithoutId } = dbRecurringShift;
 
-      // Insert shift into Supabase
+      // Insert into Supabase
       const { data, error } = await supabase
-        .from('shifts')
+        .from('recurring_shifts')
         .insert([shiftWithoutId])
         .select();
 
       if (error) {
-        console.error('Error inserting shift:', error);
-        alert(`Failed to create shift: ${error.message}`);
+        console.error('Error inserting recurring shift:', error);
+        alert(`Failed to create recurring shift: ${error.message}`);
         return;
       }
 
-      // Map returned data and update local state
+      // Update local state
       if (data && data.length > 0) {
-        const savedShift = mapShiftFromDB(data[0]);
-        setShifts([...shifts, savedShift]);
+        const savedRecurringShift = mapRecurringShiftFromDB(data[0]);
+        setRecurringShifts([...recurringShifts, savedRecurringShift]);
       }
 
-      setNewShift({ title: '', date: '', startTime: '', endTime: '', requiredSkills: [] });
+      // Reset form
+      setNewRecurringShift({ title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1 });
     } catch (err) {
-      console.error('Unexpected error during shift creation:', err);
-      alert('An unexpected error occurred while creating shift');
+      console.error('Unexpected error during recurring shift creation:', err);
+      alert('An unexpected error occurred while creating recurring shift');
     }
   };
 
@@ -127,6 +176,36 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const requestDeleteVolunteer = (id: string, name: string) => {
     setDeleteConfirmation({ type: 'volunteer', id, name });
+  };
+
+  const handleDeleteShiftOccurrence = async (shift: Shift) => {
+    // Only allow deleting generated shift instances (those with recurringShiftId)
+    if (!shift.recurringShiftId || !shift.date) {
+      alert('Cannot delete this shift. Only recurring shift occurrences can be deleted.');
+      return;
+    }
+
+    try {
+      // Add to deleted_shift_occurrences table
+      const { error } = await supabase
+        .from('deleted_shift_occurrences')
+        .insert([{
+          recurring_shift_id: shift.recurringShiftId,
+          deleted_date: shift.date,
+        }]);
+
+      if (error) {
+        console.error('Error deleting shift occurrence:', error);
+        alert(`Failed to delete shift occurrence: ${error.message}`);
+        return;
+      }
+
+      // Reload deleted occurrences
+      await loadDeletedOccurrences();
+    } catch (err) {
+      console.error('Unexpected error during shift occurrence deletion:', err);
+      alert('An unexpected error occurred while deleting shift occurrence');
+    }
   };
 
   const confirmDelete = async () => {
@@ -259,7 +338,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return allShifts.filter(shift => shift.date >= todayStr && shift.date <= endOfWeekStr);
   };
 
-  const visibleShifts = activeTab === 'shifts' ? getUpcomingWeekShifts(shifts) : shifts;
+  const visibleShifts = activeTab === 'shifts' ? getUpcomingWeekShifts(displayedShifts) : displayedShifts;
 
   // --- Calendar & Stats Helper Components ---
 
@@ -663,10 +742,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </div>
                           )}
                         </div>
-                        <button 
-                          onClick={() => requestDeleteShift(shift.id, shift.title)}
+                        <button
+                          onClick={() => handleDeleteShiftOccurrence(shift)}
                           className="text-slate-300 hover:text-red-500 transition-colors p-2 rounded hover:bg-red-50"
-                          title="Delete Shift"
+                          title="Delete This Occurrence"
                         >
                           <Trash2 size={18} />
                         </button>
@@ -680,52 +759,73 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="w-80">
               <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 sticky top-24">
                 <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                  <Plus size={18} className="text-indigo-600" /> Create New Shift
+                  <Plus size={18} className="text-indigo-600" /> Create Recurring Shift
                 </h3>
+                <p className="text-xs text-slate-500 mb-4">Create a shift that repeats every week</p>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Event Title</label>
-                    <input 
-                      type="text" 
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Shift Title</label>
+                    <input
+                      type="text"
                       className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                      value={newShift.title}
-                      onChange={e => setNewShift({...newShift, title: e.target.value})}
+                      value={newRecurringShift.title}
+                      onChange={e => setNewRecurringShift({...newRecurringShift, title: e.target.value})}
+                      placeholder="e.g., Monday Morning Shift"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
-                    <input 
-                      type="date" 
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Day of Week</label>
+                    <select
                       className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                      value={newShift.date}
-                      onChange={e => setNewShift({...newShift, date: e.target.value})}
-                    />
+                      value={newRecurringShift.dayOfWeek}
+                      onChange={e => setNewRecurringShift({...newRecurringShift, dayOfWeek: parseInt(e.target.value) as 0 | 1 | 2 | 3 | 4 | 5 | 6})}
+                    >
+                      <option value={0}>Sunday</option>
+                      <option value={1}>Monday</option>
+                      <option value={2}>Tuesday</option>
+                      <option value={3}>Wednesday</option>
+                      <option value={4}>Thursday</option>
+                      <option value={5}>Friday</option>
+                      <option value={6}>Saturday</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
+                    <select
+                      className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      value={newRecurringShift.location}
+                      onChange={e => setNewRecurringShift({...newRecurringShift, location: e.target.value})}
+                    >
+                      <option value="BOTH">Both Locations</option>
+                      <option value="HATACHANA">Hatachana</option>
+                      <option value="DIZENGOFF">Dizengoff</option>
+                    </select>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-1">Start</label>
-                      <input 
-                        type="time" 
+                      <input
+                        type="time"
                         className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        value={newShift.startTime}
-                        onChange={e => setNewShift({...newShift, startTime: e.target.value})}
+                        value={newRecurringShift.startTime}
+                        onChange={e => setNewRecurringShift({...newRecurringShift, startTime: e.target.value})}
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-1">End</label>
-                      <input 
-                        type="time" 
+                      <input
+                        type="time"
                         className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        value={newShift.endTime}
-                        onChange={e => setNewShift({...newShift, endTime: e.target.value})}
+                        value={newRecurringShift.endTime}
+                        onChange={e => setNewRecurringShift({...newRecurringShift, endTime: e.target.value})}
                       />
                     </div>
                   </div>
-                  <button 
-                    onClick={handleAddShift}
+                  <button
+                    onClick={handleAddRecurringShift}
                     className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors mt-2"
                   >
-                    Add Shift
+                    Create Recurring Shift
                   </button>
                 </div>
               </div>
