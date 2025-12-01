@@ -202,7 +202,7 @@ function scheduleShiftsMultiPass(
     return true;
   };
 
-  // Multiple passes: keep going until all shifts are filled or no capacity remains
+  // Multiple passes: keep going until everyone is utilized OR shifts are maxed out
   let passNumber = 1;
   let assignmentsMade = true;
 
@@ -221,10 +221,10 @@ function scheduleShiftsMultiPass(
     for (const shift of sortedShifts) {
       const currentAssignees = shiftAssignments.get(shift.id) || [];
 
-      // Target: 3 volunteers per shift, max 5
+      // Max 5 volunteers per shift
       if (currentAssignees.length >= 5) continue;
 
-      // Try to assign volunteers (in priority order: novices first)
+      // Try to assign volunteers (in priority order: novices first, experts last)
       for (const volunteer of sortedVolunteers) {
         // Skip if already assigned to this shift
         if (currentAssignees.includes(volunteer.id)) continue;
@@ -244,16 +244,19 @@ function scheduleShiftsMultiPass(
         capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
         assignmentsMade = true;
 
-        // If shift has 3 volunteers, move to next shift
-        if (currentAssignees.length >= 3) break;
+        // For passes 1-2, prioritize breadth (3 volunteers per shift)
+        // After that, continue adding to utilize all capacity
+        if (passNumber <= 2 && currentAssignees.length >= 3) {
+          break; // Move to next shift to spread volunteers
+        }
       }
     }
 
     passNumber++;
 
-    // Safety: max 10 passes
-    if (passNumber > 10) {
-      console.warn('Reached maximum passes (10), stopping');
+    // Safety: max 20 passes (increased to ensure everyone gets to 100%)
+    if (passNumber > 20) {
+      console.warn('Reached maximum passes (20), stopping');
       break;
     }
   }
@@ -261,21 +264,34 @@ function scheduleShiftsMultiPass(
   // Report results
   console.log('\n=== Final Results ===');
   console.log(`Total assignments: ${assignments.length}`);
-  console.log('Per volunteer:');
+  console.log('\nUtilization per volunteer:');
+
+  let totalCapacity = 0;
+  let totalUsed = 0;
+
   capacityUsed.forEach((used, volId) => {
     const volunteer = volunteers.find(v => v.id === volId);
     const capacity = getMonthlyCapacity(volunteer?.frequency || '');
-    if (used > 0) {
-      console.log(`  ${volunteer?.name}: ${used}/${capacity} (${Math.round(used/capacity*100)}%)`);
-    }
+    totalCapacity += capacity;
+    totalUsed += used;
+
+    const skillLabel = volunteer?.skillLevel === 1 ? 'NOVICE' : volunteer?.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
+    const percentage = capacity > 0 ? Math.round(used/capacity*100) : 0;
+    console.log(`  ${volunteer?.name} (${skillLabel}): ${used}/${capacity} (${percentage}%)`);
   });
 
-  console.log('Per shift:');
+  const overallUtilization = totalCapacity > 0 ? Math.round(totalUsed/totalCapacity*100) : 0;
+  console.log(`\nOverall utilization: ${totalUsed}/${totalCapacity} (${overallUtilization}%)`);
+
+  console.log('\nShift coverage:');
   let emptyShifts = 0;
+  let wellStaffed = 0;
   shiftAssignments.forEach((assignees, shiftId) => {
     if (assignees.length === 0) emptyShifts++;
+    if (assignees.length >= 3) wellStaffed++;
   });
-  console.log(`  ${shifts.length - emptyShifts}/${shifts.length} shifts filled`);
+  console.log(`  ${wellStaffed}/${shifts.length} shifts well-staffed (3+ volunteers)`);
+  console.log(`  ${shifts.length - emptyShifts}/${shifts.length} shifts covered (1+ volunteers)`);
   console.log(`  ${emptyShifts} shifts remain empty`);
 
   return assignments;
