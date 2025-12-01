@@ -1,10 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Shift, Volunteer } from "../types";
 
-// Safely access process.env to avoid "process is not defined" reference errors in browser
-const apiKey = (typeof process !== 'undefined' && process.env && process.env.API_KEY) 
-  ? process.env.API_KEY 
-  : '';
+// Access Vite environment variable correctly
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
 const ai = new GoogleGenAI({ apiKey });
 
