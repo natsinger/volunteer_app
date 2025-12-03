@@ -3,13 +3,14 @@ import { Volunteer, Shift } from './types';
 import AdminDashboard from './components/AdminDashboard';
 import VolunteerDashboard from './components/VolunteerDashboard';
 import LoginForm from './components/LoginForm';
+import VolunteerWelcome from './components/VolunteerWelcome';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB, mapVolunteerToDB, mapShiftToDB } from './lib/mappers';
 import { LogOut } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { user, userRole, volunteerData, loading, signOut } = useAuth();
+  const { user, userRole, volunteerData, loading, signOut, needsProfileCompletion, setNeedsProfileCompletion } = useAuth();
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
@@ -65,6 +66,19 @@ const AppContent: React.FC = () => {
 
   if (!user || !userRole) {
     return <LoginForm />;
+  }
+
+  // Show welcome screen for volunteers who need to complete their profile
+  if (userRole === 'volunteer' && needsProfileCompletion) {
+    return (
+      <VolunteerWelcome
+        onComplete={(updatedVolunteer) => {
+          setNeedsProfileCompletion(false);
+          // Reload data after profile completion
+          loadData();
+        }}
+      />
+    );
   }
 
   return (

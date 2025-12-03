@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment } from '../types';
 import { generateScheduleAI, getMonthlyCapacity } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
+import InviteVolunteerModal from './InviteVolunteerModal';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
@@ -40,6 +41,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Volunteer Management State
   const [searchTerm, setSearchTerm] = useState('');
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
+  const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
 
   // Recurring Shift Management State
   const [recurringShifts, setRecurringShifts] = useState<RecurringShift[]>([]);
@@ -819,14 +821,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button 
+                          <button
+                            onClick={() => setInvitingVolunteer(vol)}
+                            className="text-slate-400 hover:text-emerald-600 transition-colors p-1"
+                            title="Send Invite"
+                          >
+                            <Mail size={18} />
+                          </button>
+                          <button
                             onClick={() => setEditingVolunteer(vol)}
                             className="text-slate-400 hover:text-indigo-600 transition-colors p-1"
                             title="Edit"
                           >
                             <Edit2 size={18} />
                           </button>
-                          <button 
+                          <button
                             onClick={() => requestDeleteVolunteer(vol.id, vol.name)}
                             className="text-slate-400 hover:text-red-600 transition-colors p-1"
                             title="Delete"
@@ -1416,6 +1425,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <BulkUploadModal
           onClose={() => setShowBulkUpload(false)}
           onUpload={handleBulkUpload}
+        />
+      )}
+
+      {invitingVolunteer && (
+        <InviteVolunteerModal
+          volunteer={invitingVolunteer}
+          onClose={() => setInvitingVolunteer(null)}
+          onInviteSent={() => {
+            // Optionally reload volunteers data
+            setInvitingVolunteer(null);
+          }}
         />
       )}
 
