@@ -23,23 +23,23 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [editForm, setEditForm] = useState<Volunteer>(currentUser);
   const [newBlackoutDate, setNewBlackoutDate] = useState('');
 
-  // Filter shifts for the current week (Today -> End of current week)
-  const isShiftThisWeek = (dateStr: string) => {
+  // Filter shifts for the month ahead (Today -> 30 days from now)
+  const isShiftInNextMonth = (dateStr: string) => {
     const today = new Date();
-    const currentDay = today.getDay(); // 0-6
-    
-    // Calculate end of week (Saturday)
-    const endOfWeek = new Date(today);
-    endOfWeek.setDate(today.getDate() + (6 - currentDay));
-    
-    const todayStr = today.toISOString().split('T')[0];
-    const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
+    today.setHours(0, 0, 0, 0); // Start of today
 
-    return dateStr >= todayStr && dateStr <= endOfWeekStr;
+    // Calculate 30 days from now
+    const endDate = new Date(today);
+    endDate.setDate(today.getDate() + 30);
+
+    const todayStr = today.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    return dateStr >= todayStr && dateStr <= endDateStr;
   };
 
-  const myShifts = shifts.filter(s => s.assignedVolunteerId === currentUser.id && isShiftThisWeek(s.date));
-  const openShifts = shifts.filter(s => s.status === 'Open' && isShiftThisWeek(s.date));
+  const myShifts = shifts.filter(s => s.assignedVolunteerId === currentUser.id && isShiftInNextMonth(s.date));
+  const openShifts = shifts.filter(s => s.status === 'Open' && isShiftInNextMonth(s.date));
 
   const handleSave = () => {
     updateVolunteer(editForm);
@@ -120,12 +120,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
           {/* My Upcoming Shifts */}
           <div className="lg:col-span-2 space-y-6">
             <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <Calendar className="text-indigo-600" /> My Upcoming Shifts (This Week)
+              <Calendar className="text-indigo-600" /> My Upcoming Shifts (Next 30 Days)
             </h2>
-            
+
             {myShifts.length === 0 ? (
               <div className="bg-white p-10 rounded-xl border border-dashed border-slate-300 text-center text-slate-500">
-                You have no shifts assigned for this week. Check the open shifts!
+                You have no shifts assigned for the next 30 days. Check the open shifts!
               </div>
             ) : (
               <div className="space-y-4">
@@ -150,12 +150,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
             {/* Opportunities Section */}
             <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2 mt-8">
-              <MapPin className="text-emerald-600" /> Open Opportunities (This Week)
+              <MapPin className="text-emerald-600" /> Open Opportunities (Next 30 Days)
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {openShifts.length === 0 ? (
                  <div className="col-span-2 text-center text-slate-400 py-4 italic">
-                    No open opportunities available for the rest of this week.
+                    No open opportunities available for the next 30 days.
                  </div>
               ) : (
                 openShifts.slice(0, 4).map(shift => (
