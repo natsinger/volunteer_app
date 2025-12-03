@@ -1,5 +1,5 @@
-// Follow this setup guide to integrate the Deno runtime into your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
+// Supabase Edge Function: Generate Magic Link for Volunteer Invite
+// This version returns the invite link instead of sending email
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -29,7 +29,7 @@ serve(async (req) => {
     })
 
     // Get request body
-    const { email, volunteerId, volunteerName } = await req.json()
+    const { email, volunteerId, volunteerName, generateLinkOnly } = await req.json()
 
     if (!email || !volunteerId) {
       throw new Error('Email and volunteerId are required')
@@ -48,44 +48,49 @@ serve(async (req) => {
     const existingUser = existingUsers.users.find((u) => u.email === email)
 
     let userId: string
+    let inviteUrl: string
 
     if (existingUser) {
       console.log(`User already exists: ${existingUser.id}`)
       userId = existingUser.id
 
-      // If user exists but hasn't verified email, resend invite
-      if (!existingUser.email_confirmed_at) {
-        const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-          redirectTo: `${req.headers.get('origin') || 'http://localhost:5173'}`,
-        })
+      // Generate a magic link for existing user (password reset type)
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'recovery',
+        email: email,
+      })
 
-        if (inviteError) {
-          console.error('Error resending invite:', inviteError)
-          throw inviteError
-        }
-
-        console.log('Invite email resent')
+      if (linkError) {
+        console.error('Error generating magic link:', linkError)
+        throw linkError
       }
+
+      console.log('Link data received:', JSON.stringify(linkData, null, 2))
+      inviteUrl = linkData.properties.action_link
+      console.log('Magic link generated for existing user:', inviteUrl)
     } else {
-      // Create new user and send invite
-      const { data: newUser, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-        email,
-        {
-          redirectTo: `${req.headers.get('origin') || 'http://localhost:5173'}`,
-        }
-      )
+      // Generate an invite link for new user
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'invite',
+        email: email,
+        options: {
+          data: {
+            volunteer_name: volunteerName,
+            volunteer_id: volunteerId,
+          },
+        },
+      })
 
-      if (inviteError) {
-        console.error('Error creating user and sending invite:', inviteError)
-        throw inviteError
+      if (linkError) {
+        console.error('Error generating invite link:', linkError)
+        throw linkError
       }
 
-      if (!newUser.user) {
-        throw new Error('Failed to create user')
-      }
-
-      userId = newUser.user.id
-      console.log(`New user created: ${userId}`)
+      console.log('Link data received:', JSON.stringify(linkData, null, 2))
+      // The user is created automatically when generating an invite link
+      inviteUrl = linkData.properties.action_link
+      userId = linkData.user.id
+      console.log(`New user created: ${userId}, inviteUrl: ${inviteUrl}`)
     }
 
     // Link the auth user to the volunteer record
@@ -100,12 +105,58 @@ serve(async (req) => {
     }
 
     console.log(`Volunteer ${volunteerId} linked to user ${userId}`)
+    console.log(`generateLinkOnly: ${generateLinkOnly}, inviteUrl: ${inviteUrl}`)
+
+    // If generateLinkOnly is true, just return the link without sending email
+    if (generateLinkOnly) {
+      const response = {
+        success: true,
+        message: 'Magic link generated successfully',
+        userId,
+        inviteUrl,
+        method: 'magic_link',
+      }
+      console.log('Returning magic link response:', JSON.stringify(response, null, 2))
+      return new Response(
+        JSON.stringify(response),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        }
+      )
+    }
+
+    // Otherwise, send email via Supabase (if SMTP is configured)
+    const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: `${req.headers.get('origin') || 'http://localhost:5173'}`,
+    })
+
+    if (inviteError) {
+      // If email fails, still return the magic link
+      console.warn('Email sending failed, but magic link was generated:', inviteError)
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'User created but email failed. Use the magic link below.',
+          userId,
+          inviteUrl,
+          emailError: inviteError.message,
+          method: 'magic_link_fallback',
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        }
+      )
+    }
 
     return new Response(
       JSON.stringify({
         success: true,
         message: 'Invite sent successfully',
         userId,
+        inviteUrl,
+        method: 'email',
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -117,7 +168,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        error: error.message || 'An error occurred while sending the invite',
+        error: error.message || 'An error occurred while processing the invite',
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

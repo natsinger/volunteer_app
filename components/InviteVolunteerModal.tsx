@@ -17,19 +17,67 @@ const InviteVolunteerModal: React.FC<InviteVolunteerModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [inviteMethod, setInviteMethod] = useState<'supabase-dashboard' | 'edge-function'>('supabase-dashboard');
+  const [inviteMethod, setInviteMethod] = useState<'magic-link' | 'supabase-dashboard' | 'edge-function'>('magic-link');
+  const [magicLink, setMagicLink] = useState<string>('');
+  const [copied, setCopied] = useState(false);
+
+  const handleGenerateMagicLink = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      console.log('🔗 Generating magic link for:', volunteer.email);
+
+      // Call Supabase Edge Function to generate magic link
+      const { data, error: functionError } = await supabase.functions.invoke('invite-volunteer', {
+        body: {
+          email: volunteer.email,
+          volunteerId: volunteer.id,
+          volunteerName: volunteer.name,
+          generateLinkOnly: true,
+        },
+      });
+
+      console.log('📦 Response:', { data, functionError });
+
+      if (functionError) {
+        console.error('❌ Function error:', functionError);
+        throw functionError;
+      }
+
+      if (data?.error) {
+        console.error('❌ Data error:', data.error);
+        throw new Error(data.error);
+      }
+
+      if (data?.inviteUrl) {
+        console.log('✅ Magic link generated:', data.inviteUrl);
+        setMagicLink(data.inviteUrl);
+        setSuccess(true);
+      } else {
+        console.error('❌ No invite URL in response:', data);
+        throw new Error('No invite URL returned from server. Check the edge function logs.');
+      }
+    } catch (err: any) {
+      console.error('❌ Error generating magic link:', err);
+      setError(err.message || 'Failed to generate magic link. Check the browser console for details.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleInviteViaEdgeFunction = async () => {
     setLoading(true);
     setError('');
 
     try {
-      // Call Supabase Edge Function to send invite
+      // Call Supabase Edge Function to send invite (email method)
       const { data, error: functionError } = await supabase.functions.invoke('invite-volunteer', {
         body: {
           email: volunteer.email,
           volunteerId: volunteer.id,
           volunteerName: volunteer.name,
+          generateLinkOnly: false,
         },
       });
 
@@ -41,17 +89,31 @@ const InviteVolunteerModal: React.FC<InviteVolunteerModalProps> = ({
         throw new Error(data.error);
       }
 
+      // If email failed but we have a magic link, show it
+      if (data.method === 'magic_link_fallback' && data.inviteUrl) {
+        setMagicLink(data.inviteUrl);
+        setError('Email failed to send, but here\'s a magic link you can share directly:');
+      }
+
       setSuccess(true);
-      setTimeout(() => {
-        onInviteSent();
-        onClose();
-      }, 2000);
+      if (!data.inviteUrl) {
+        setTimeout(() => {
+          onInviteSent();
+          onClose();
+        }, 2000);
+      }
     } catch (err: any) {
       console.error('Error sending invite:', err);
       setError(err.message || 'Failed to send invite. Please try the manual method below.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(magicLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleManualInvite = () => {
@@ -81,6 +143,86 @@ This will link the auth account to the volunteer record.
     }, 2000);
   };
 
+  if (success && magicLink) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full overflow-hidden">
+          <div className="bg-emerald-600 p-6 text-center">
+            <CheckCircle size={48} className="text-white mx-auto mb-3" />
+            <h2 className="text-xl font-bold text-white">Magic Link Generated!</h2>
+            <p className="text-emerald-100 text-sm mt-2">
+              Share this link with {volunteer.name}
+            </p>
+          </div>
+          <div className="p-6">
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Copy and share this link:
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={magicLink}
+                  readOnly
+                  className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-mono"
+                  onClick={(e) => e.currentTarget.select()}
+                />
+                <button
+                  onClick={handleCopyLink}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    copied
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  }`}
+                >
+                  {copied ? '✓ Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-start gap-3">
+                <Info size={20} className="text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-blue-900">
+                  <p className="font-medium mb-2">How to use this link:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-blue-800">
+                    <li>Send this link to {volunteer.name} via text, WhatsApp, email, etc.</li>
+                    <li>When they click it, they'll set their password</li>
+                    <li>They'll complete their profile</li>
+                    <li>Then they can access the volunteer portal</li>
+                  </ol>
+                  <p className="mt-2 text-xs text-blue-700">
+                    ⏰ Link expires in 24 hours
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  handleCopyLink();
+                  setTimeout(() => {
+                    onClose();
+                  }, 500);
+                }}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold transition-colors"
+              >
+                Copy Link & Close
+              </button>
+              <button
+                onClick={onClose}
+                className="px-6 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-lg font-semibold transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (success) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -97,6 +239,12 @@ This will link the auth account to the volunteer record.
                 ? `An invitation email has been sent to ${volunteer.email}`
                 : 'Manual invite instructions have been copied to your clipboard'}
             </p>
+            <button
+              onClick={onClose}
+              className="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-semibold transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       </div>
@@ -156,8 +304,38 @@ This will link the auth account to the volunteer record.
           <div className="border-t pt-4">
             <h3 className="font-semibold text-slate-900 mb-3">Choose Invite Method:</h3>
 
-            {/* Edge Function Method */}
+            {/* Magic Link Method */}
             <div className="space-y-3">
+              <button
+                onClick={() => setInviteMethod('magic-link')}
+                className={`w-full p-4 border-2 rounded-lg text-left transition-all ${
+                  inviteMethod === 'magic-link'
+                    ? 'border-indigo-500 bg-indigo-50'
+                    : 'border-slate-200 hover:border-indigo-300'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    checked={inviteMethod === 'magic-link'}
+                    onChange={() => setInviteMethod('magic-link')}
+                    className="mt-1"
+                  />
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-slate-900 flex items-center gap-2">
+                      🔗 Magic Link (Recommended)
+                    </h4>
+                    <p className="text-sm text-slate-600 mt-1">
+                      Generate a secure link you can share via text, WhatsApp, or any method
+                    </p>
+                    <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 inline-flex items-center gap-1">
+                      ✓ No email configuration needed
+                    </div>
+                  </div>
+                </div>
+              </button>
+
+              {/* Edge Function Method */}
               <button
                 onClick={() => setInviteMethod('edge-function')}
                 className={`w-full p-4 border-2 rounded-lg text-left transition-all ${
@@ -175,14 +353,14 @@ This will link the auth account to the volunteer record.
                   />
                   <div className="flex-1">
                     <h4 className="font-semibold text-slate-900">
-                      Automated Invite (Recommended)
+                      Automated Email Invite
                     </h4>
                     <p className="text-sm text-slate-600 mt-1">
                       Automatically creates auth account and sends invite email
                     </p>
                     <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-flex items-center gap-1">
                       <Info size={12} />
-                      Requires Edge Function setup
+                      Requires email/SMTP configuration
                     </div>
                   </div>
                 </div>
@@ -242,7 +420,9 @@ This will link the auth account to the volunteer record.
             </button>
             <button
               onClick={
-                inviteMethod === 'edge-function'
+                inviteMethod === 'magic-link'
+                  ? handleGenerateMagicLink
+                  : inviteMethod === 'edge-function'
                   ? handleInviteViaEdgeFunction
                   : handleManualInvite
               }
@@ -252,12 +432,16 @@ This will link the auth account to the volunteer record.
               {loading ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Sending...
+                  {inviteMethod === 'magic-link' ? 'Generating...' : 'Sending...'}
                 </>
               ) : (
                 <>
                   <Mail size={20} />
-                  {inviteMethod === 'edge-function' ? 'Send Invite' : 'Copy Instructions'}
+                  {inviteMethod === 'magic-link'
+                    ? 'Generate Magic Link'
+                    : inviteMethod === 'edge-function'
+                    ? 'Send Email Invite'
+                    : 'Copy Instructions'}
                 </>
               )}
             </button>
