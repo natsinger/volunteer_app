@@ -20,19 +20,237 @@ export const getMonthlyCapacity = (frequency: string): number => {
 const getShiftDayCode = (dateStr: string, timeStr: string): string => {
   const date = new Date(dateStr);
   const day = date.getDay(); // 0 = Sunday
-  
+
   // Specific logic for Tuesday (Day 2) splits
   if (day === 2) {
     const hour = parseInt(timeStr.split(':')[0], 10);
     // Assuming evening starts after 16:00 (4 PM)
     return hour < 16 ? '2_morning' : '2_evening';
   }
-  
+
   return day.toString();
 };
 
+/**
+ * Enforce strict capacity limits on assignments
+ * Removes excess assignments if any volunteer exceeds their capacity
+ */
+function enforceCapacityLimits(
+  assignments: Array<{shiftId: string, volunteerId: string, reasoning?: string}>,
+  volunteers: Volunteer[],
+  shifts: Shift[]
+): Array<{shiftId: string, volunteerId: string, reasoning?: string}> {
+
+  // Create capacity map
+  const capacityMap = new Map<string, number>();
+  volunteers.forEach(v => {
+    capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
+  });
+
+  // Count assignments per volunteer
+  const assignmentCounts = new Map<string, number>();
+  const validAssignments: typeof assignments = [];
+
+  // Sort shifts by date to prioritize earlier shifts
+  const shiftDateMap = new Map<string, string>();
+  shifts.forEach(s => shiftDateMap.set(s.id, s.date));
+
+  const sortedAssignments = [...assignments].sort((a, b) => {
+    const dateA = shiftDateMap.get(a.shiftId) || '';
+    const dateB = shiftDateMap.get(b.shiftId) || '';
+    return dateA.localeCompare(dateB);
+  });
+
+  // Process assignments in order, enforcing capacity
+  for (const assignment of sortedAssignments) {
+    const volunteerId = assignment.volunteerId;
+    const capacity = capacityMap.get(volunteerId) || 0;
+    const currentCount = assignmentCounts.get(volunteerId) || 0;
+
+    if (currentCount < capacity) {
+      validAssignments.push(assignment);
+      assignmentCounts.set(volunteerId, currentCount + 1);
+    } else {
+      console.warn(`Skipping assignment for ${volunteerId}: already at capacity (${capacity})`);
+    }
+  }
+
+  // Log enforcement results
+  console.log('Capacity Enforcement Results:');
+  assignmentCounts.forEach((count, volunteerId) => {
+    const capacity = capacityMap.get(volunteerId) || 0;
+    const volunteer = volunteers.find(v => v.id === volunteerId);
+    console.log(`  ${volunteer?.name}: ${count}/${capacity} assignments`);
+  });
+
+  const removed = assignments.length - validAssignments.length;
+  if (removed > 0) {
+    console.warn(`Removed ${removed} assignments that exceeded capacity limits`);
+  }
+
+  return validAssignments;
+}
+
+/**
+ * Deterministic scheduling algorithm that fills ALL shifts
+ * Prioritizes novices first, saves experts for last
+ * Does multiple passes until all shifts are filled or no capacity remains
+ */
+function scheduleShiftsMultiPass(
+  volunteers: Volunteer[],
+  shifts: Shift[]
+): Array<{shiftId: string, volunteerId: string, reasoning: string}> {
+
+  const assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}> = [];
+
+  // Track capacity usage
+  const capacityUsed = new Map<string, number>();
+  volunteers.forEach(v => capacityUsed.set(v.id, 0));
+
+  // Track assignments per shift
+  const shiftAssignments = new Map<string, string[]>();
+  shifts.forEach(s => shiftAssignments.set(s.id, []));
+
+  // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
+  // Within same skill level, sort by capacity (higher capacity first)
+  const sortedVolunteers = [...volunteers].sort((a, b) => {
+    if (a.skillLevel !== b.skillLevel) {
+      return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
+    }
+    return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
+  });
+
+  console.log('Volunteer priority order (novices first):');
+  sortedVolunteers.forEach((v, i) => {
+    const skillLabel = v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
+    console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${getMonthlyCapacity(v.frequency)})`);
+  });
+
+  // Helper: Check if volunteer can work this shift
+  const canWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
+    const capacity = getMonthlyCapacity(volunteer.frequency);
+    const used = capacityUsed.get(volunteer.id) || 0;
+
+    // Check capacity
+    if (used >= capacity) return false;
+
+    // Check location
+    if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
+      if (volunteer.preferredLocation !== shift.location) return false;
+    }
+
+    // Check day preference
+    const dayCode = getShiftDayCode(shift.date, shift.startTime);
+    if (!volunteer.preferredDays.includes(dayCode)) return false;
+
+    // Check blackout dates
+    if (volunteer.blackoutDates.includes(shift.date)) return false;
+
+    // Check only dates
+    if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  // Multiple passes: keep going until everyone is utilized OR shifts are maxed out
+  let passNumber = 1;
+  let assignmentsMade = true;
+
+  while (assignmentsMade) {
+    assignmentsMade = false;
+    console.log(`\n=== Pass ${passNumber} ===`);
+
+    // Sort shifts by how many volunteers they have (fewest first)
+    const sortedShifts = [...shifts].sort((a, b) => {
+      const aCount = shiftAssignments.get(a.id)?.length || 0;
+      const bCount = shiftAssignments.get(b.id)?.length || 0;
+      if (aCount !== bCount) return aCount - bCount;
+      return a.date.localeCompare(b.date); // Earlier dates first
+    });
+
+    for (const shift of sortedShifts) {
+      const currentAssignees = shiftAssignments.get(shift.id) || [];
+
+      // Max 5 volunteers per shift
+      if (currentAssignees.length >= 5) continue;
+
+      // Try to assign volunteers (in priority order: novices first, experts last)
+      for (const volunteer of sortedVolunteers) {
+        // Skip if already assigned to this shift
+        if (currentAssignees.includes(volunteer.id)) continue;
+
+        // Check if volunteer can work this shift
+        if (!canWorkShift(volunteer, shift)) continue;
+
+        // Assign!
+        assignments.push({
+          shiftId: shift.id,
+          volunteerId: volunteer.id,
+          reasoning: `Pass ${passNumber}: ${volunteer.name} (skill ${volunteer.skillLevel}) assigned to ${shift.date}`
+        });
+
+        currentAssignees.push(volunteer.id);
+        shiftAssignments.set(shift.id, currentAssignees);
+        capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
+        assignmentsMade = true;
+
+        // For passes 1-2, prioritize breadth (3 volunteers per shift)
+        // After that, continue adding to utilize all capacity
+        if (passNumber <= 2 && currentAssignees.length >= 3) {
+          break; // Move to next shift to spread volunteers
+        }
+      }
+    }
+
+    passNumber++;
+
+    // Safety: max 20 passes (increased to ensure everyone gets to 100%)
+    if (passNumber > 20) {
+      console.warn('Reached maximum passes (20), stopping');
+      break;
+    }
+  }
+
+  // Report results
+  console.log('\n=== Final Results ===');
+  console.log(`Total assignments: ${assignments.length}`);
+  console.log('\nUtilization per volunteer:');
+
+  let totalCapacity = 0;
+  let totalUsed = 0;
+
+  capacityUsed.forEach((used, volId) => {
+    const volunteer = volunteers.find(v => v.id === volId);
+    const capacity = getMonthlyCapacity(volunteer?.frequency || '');
+    totalCapacity += capacity;
+    totalUsed += used;
+
+    const skillLabel = volunteer?.skillLevel === 1 ? 'NOVICE' : volunteer?.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
+    const percentage = capacity > 0 ? Math.round(used/capacity*100) : 0;
+    console.log(`  ${volunteer?.name} (${skillLabel}): ${used}/${capacity} (${percentage}%)`);
+  });
+
+  const overallUtilization = totalCapacity > 0 ? Math.round(totalUsed/totalCapacity*100) : 0;
+  console.log(`\nOverall utilization: ${totalUsed}/${totalCapacity} (${overallUtilization}%)`);
+
+  console.log('\nShift coverage:');
+  let emptyShifts = 0;
+  let wellStaffed = 0;
+  shiftAssignments.forEach((assignees, shiftId) => {
+    if (assignees.length === 0) emptyShifts++;
+    if (assignees.length >= 3) wellStaffed++;
+  });
+  console.log(`  ${wellStaffed}/${shifts.length} shifts well-staffed (3+ volunteers)`);
+  console.log(`  ${shifts.length - emptyShifts}/${shifts.length} shifts covered (1+ volunteers)`);
+  console.log(`  ${emptyShifts} shifts remain empty`);
+
+  return assignments;
+}
+
 export const generateScheduleAI = async (
-  volunteers: Volunteer[], 
+  volunteers: Volunteer[],
   shifts: Shift[],
   targetMonth: number, // 1-12
   targetYear: number
@@ -47,8 +265,8 @@ export const generateScheduleAI = async (
   // Filter open shifts SPECIFICALLY for the target month and year
   const targetShifts = shifts.filter(s => {
     const d = new Date(s.date);
-    return s.status === 'Open' && 
-           d.getMonth() + 1 === targetMonth && 
+    return s.status === 'Open' &&
+           d.getMonth() + 1 === targetMonth &&
            d.getFullYear() === targetYear;
   });
 
@@ -60,116 +278,25 @@ export const generateScheduleAI = async (
     throw new Error(`No open shifts found for ${targetMonth}/${targetYear}. Please check your shift calendar.`);
   }
 
-  // Prepare enriched data for the AI
-  const enrichedVolunteers = activeVolunteers.map(v => ({
-    id: v.id,
-    name: v.name,
-    monthlyCapacity: getMonthlyCapacity(v.frequency),
-    preferredLocation: v.preferredLocation,
-    preferredDays: v.preferredDays,
-    blackoutDates: v.blackoutDates,
-    onlyDates: v.onlyDates
-  }));
+  console.log(`\n🔄 Starting deterministic scheduling:`);
+  console.log(`  Volunteers: ${activeVolunteers.length} active`);
+  console.log(`  Shifts: ${targetShifts.length} open shifts`);
 
-  const enrichedShifts = targetShifts.map(s => ({
-    id: s.id,
-    dayCode: getShiftDayCode(s.date, s.startTime),
-    date: s.date,
-    time: s.startTime,
-    location: s.id.toLowerCase().includes('dizengoff') || s.title.toLowerCase().includes('dizengoff') ? 'DIZENGOFF' : 'HATACHANA',
-  }));
+  // Use deterministic multi-pass algorithm instead of AI
+  const validAssignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts);
 
-  const prompt = `
-    Role: You are a strict logic engine for scheduling.
-    Task: Create a volunteer schedule for ${targetMonth}/${targetYear}.
+  console.log(`\n✅ Scheduling complete: ${validAssignments.length} assignments created`);
 
-    *** CRITICAL HARD CONSTRAINTS (ZERO TOLERANCE) ***
-    
-    1. **MAXIMUM CAPACITY (The most important rule)**: 
-       - You MUST NOT assign a volunteer more shifts than their 'monthlyCapacity'.
-       - Example: If monthlyCapacity is 2, assigning 3 shifts is a CRITICAL ERROR.
-       - It is BETTER to leave a shift empty than to over-assign a volunteer.
-
-    2. **PREFERRED DAYS**:
-       - Volunteers can ONLY work on days listed in their 'preferredDays' array.
-       - '0'=Sunday, '1'=Monday, '2_evening'=Tuesday PM, etc.
-       - You must match the shift's 'dayCode' exactly to one of the volunteer's preferred days.
-
-    3. **LOCATION**:
-       - 'HATACHANA' volunteers -> Hatachana shifts only.
-       - 'DIZENGOFF' volunteers -> Dizengoff shifts only.
-       - 'BOTH' -> Any shift.
-
-    4. **DATES**:
-       - Do not assign on 'blackoutDates'.
-       - If 'onlyDates' is present, they can ONLY work on those specific dates.
-
-    *** SCHEDULING ALGORITHM ***
-
-    Step 1: Calculate Total Slots
-    - Aim for 3 volunteers per shift. Min is 2. Max is 5.
-    
-    Step 2: Assign
-    - Iterate through shifts chronologically.
-    - For each shift, find volunteers who match Location AND Day AND Date constraints.
-    - **CRITICAL FILTER**: Exclude any volunteer who has already reached their 'monthlyCapacity'.
-    - Assign up to 3 volunteers.
-    
-    Step 3: Verification
-    - Count assignments for each volunteer.
-    - If any volunteer has > monthlyCapacity, REMOVE their extra assignments immediately.
-
-    Data:
-    Volunteers: ${JSON.stringify(enrichedVolunteers)}
-    Shifts: ${JSON.stringify(enrichedShifts)}
-
-    Output:
-    Return a JSON object with a list of assignments.
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'geminigemini-3-pro-preview',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            assignments: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  shiftId: { type: Type.STRING },
-                  volunteerId: { type: Type.STRING },
-                  reasoning: { type: Type.STRING }
-                },
-                required: ['shiftId', 'volunteerId']
-              }
-            }
-          }
-        }
-      }
-    });
-
-    const jsonText = response.text || "{}";
-    const data = JSON.parse(jsonText);
-    return data.assignments || [];
-
-  } catch (error) {
-    console.error("Gemini Scheduling Error:", error);
-    throw error;
-  }
+  return validAssignments;
 };
 
 export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunteer>[]> => {
     if (!apiKey) return [];
 
     const prompt = `
-      Parse the following raw text data into a structured JSON array of volunteers. 
+      Parse the following raw text data into a structured JSON array of volunteers.
       The data might be CSV, copy-pasted from Excel, or natural language.
-      
+
       The target structure should map to these fields:
       - name (or fullName)
       - email
@@ -182,7 +309,7 @@ export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunt
       - blackoutDates (array of YYYY-MM-DD)
       - onlyDates (array of YYYY-MM-DD)
       - serialNumber (number)
-      
+
       Raw Data:
       ${rawData}
     `;
@@ -214,7 +341,7 @@ export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunt
           }
         }
       });
-      
+
       return JSON.parse(response.text || "[]");
     } catch (e) {
       console.error("Bulk upload parse error", e);
