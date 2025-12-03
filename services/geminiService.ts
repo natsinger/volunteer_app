@@ -147,54 +147,75 @@ export const generateScheduleAI = async (
 function scheduleShiftsMultiPass(
   volunteers: Volunteer[],
   shifts: Shift[]
-): Array<{shiftId: string, volunteerId: string, reasoning: string}> {
+): Array<{ shiftId: string; volunteerId: string; reasoning: string }> {
+  const assignments: Array<{ shiftId: string; volunteerId: string; reasoning: string }> = [];
 
-  const assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}> = [];
-
-  // Track capacity usage
+  // ---- Basic tracking ----
   const capacityUsed = new Map<string, number>();
-  volunteers.forEach(v => capacityUsed.set(v.id, 0));
-
-  // Track assignments per shift
   const shiftAssignments = new Map<string, string[]>();
-  shifts.forEach(s => shiftAssignments.set(s.id, []));
+  const shiftExpertsCount = new Map<string, number>(); // skillLevel >= 2
+  const shiftNovicesCount = new Map<string, number>(); // skillLevel === 1
+  const weeklyUsage = new Map<string, Set<number>>(); // volunteerId -> set of week indices
+  const volunteerDateTimes = new Map<string, Set<string>>(); // volunteerId -> set of "date|time"
 
-  // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
-  // Within same skill level, sort by capacity (higher capacity first)
-  const sortedVolunteers = [...volunteers].sort((a, b) => {
-    if (a.skillLevel !== b.skillLevel) {
-      return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
-    }
-    return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
+  // Index volunteers by id for quick lookup
+  const volunteerById = new Map<string, Volunteer>();
+  volunteers.forEach((v) => {
+    volunteerById.set(v.id, v);
+    capacityUsed.set(v.id, 0);
+    weeklyUsage.set(v.id, new Set());
+    volunteerDateTimes.set(v.id, new Set());
   });
 
-  console.log('Volunteer priority order (novices first):');
-  sortedVolunteers.forEach((v, i) => {
-    const skillLabel = v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
-    console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${getMonthlyCapacity(v.frequency)})`);
+  // Initialize per-shift tracking
+  const dateTimeByShift = new Map<string, string>();
+  shifts.forEach((s) => {
+    shiftAssignments.set(s.id, []);
+    shiftExpertsCount.set(s.id, 0);
+    shiftNovicesCount.set(s.id, 0);
+    dateTimeByShift.set(s.id, `${s.date}|${s.startTime}`);
   });
 
-  // Helper: Check if volunteer can work this shift
-  const canWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
-    const capacity = getMonthlyCapacity(volunteer.frequency);
-    const used = capacityUsed.get(volunteer.id) || 0;
+  // ---- Helper: compute week index (1-based) for a date, Sunday–Saturday weeks ----
+  const getWeekIndex = (dateStr: string): number => {
+    const [yearStr, monthStr, dayStr] = dateStr.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr) - 1; // JS Date month is 0-based
+    const day = Number(dayStr);
 
-    // Check capacity
-    if (used >= capacity) return false;
+    const date = new Date(year, month, day);
+    const weekday = date.getDay(); // 0=Sun..6=Sat
 
-    // Check location
+    // Sunday starting this week
+    const sundayThisWeek = new Date(date);
+    sundayThisWeek.setDate(date.getDate() - weekday);
+
+    // Week 1 is the Sunday–Saturday block that contains the 1st of the month
+    const firstOfMonth = new Date(year, month, 1);
+    const firstOfMonthWeekday = firstOfMonth.getDay();
+    const week1Sunday = new Date(firstOfMonth);
+    week1Sunday.setDate(firstOfMonth.getDate() - firstOfMonthWeekday);
+
+    const diffMs = sundayThisWeek.getTime() - week1Sunday.getTime();
+    const diffWeeks = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
+    return diffWeeks + 1;
+  };
+
+  // ---- Helper: static eligibility (ignores current capacity, weekly usage, double-booking) ----
+  const isStaticallyEligible = (volunteer: Volunteer, shift: Shift): boolean => {
+    // Location
     if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
       if (volunteer.preferredLocation !== shift.location) return false;
     }
 
-    // Check day preference
+    // Day preference
     const dayCode = getShiftDayCode(shift.date, shift.startTime);
     if (!volunteer.preferredDays.includes(dayCode)) return false;
 
-    // Check blackout dates
+    // Blackout dates
     if (volunteer.blackoutDates.includes(shift.date)) return false;
 
-    // Check only dates
+    // Only dates
     if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
       return false;
     }
@@ -202,66 +223,310 @@ function scheduleShiftsMultiPass(
     return true;
   };
 
-  // Multiple passes: keep going until everyone is utilized OR shifts are maxed out
-  let passNumber = 1;
-  let assignmentsMade = true;
+  // ---- Helper: full check if volunteer can be assigned to this shift right now ----
+  const canAssignToShift = (volunteer: Volunteer, shift: Shift): boolean => {
+    const used = capacityUsed.get(volunteer.id) || 0;
+    const capacity = getMonthlyCapacity(volunteer.frequency);
 
-  while (assignmentsMade) {
-    assignmentsMade = false;
-    console.log(`\n=== Pass ${passNumber} ===`);
+    // Capacity limit
+    if (used >= capacity) return false;
 
-    // Sort shifts by how many volunteers they have (fewest first)
-    const sortedShifts = [...shifts].sort((a, b) => {
-      const aCount = shiftAssignments.get(a.id)?.length || 0;
-      const bCount = shiftAssignments.get(b.id)?.length || 0;
-      if (aCount !== bCount) return aCount - bCount;
-      return a.date.localeCompare(b.date); // Earlier dates first
+    // Static eligibility first (location, day, blackout, only-dates)
+    if (!isStaticallyEligible(volunteer, shift)) return false;
+
+    // Weekly constraint for ONCE_A_WEEK
+    if (volunteer.frequency === 'ONCE_A_WEEK') {
+      const weekIndex = getWeekIndex(shift.date);
+      const weeks = weeklyUsage.get(volunteer.id)!;
+      if (weeks.has(weekIndex)) return false;
+    }
+
+    // Double-booking: same date+time not allowed
+    const dtKey = dateTimeByShift.get(shift.id)!;
+    const dtSet = volunteerDateTimes.get(volunteer.id)!;
+    if (dtSet.has(dtKey)) return false;
+
+    // Shift capacity
+    const currentAssignees = shiftAssignments.get(shift.id)!;
+    if (currentAssignees.length >= 5) return false;
+
+    return true;
+  };
+
+  // ---- Precompute feasible shifts per volunteer (static) ----
+  const feasibleShiftsByVolunteer = new Map<string, Shift[]>();
+  const feasibleCountByVolunteer = new Map<string, number>();
+
+  for (const v of volunteers) {
+    const feasible: Shift[] = [];
+    for (const s of shifts) {
+      if (isStaticallyEligible(v, s)) {
+        feasible.push(s);
+      }
+    }
+    feasibleShiftsByVolunteer.set(v.id, feasible);
+    feasibleCountByVolunteer.set(v.id, feasible.length);
+  }
+
+  // ---- Utility: assignment operation ----
+  const assignVolunteerToShift = (
+    volunteer: Volunteer,
+    shift: Shift,
+    phaseLabel: string
+  ) => {
+    const currentAssignees = shiftAssignments.get(shift.id)!;
+    currentAssignees.push(volunteer.id);
+    shiftAssignments.set(shift.id, currentAssignees);
+
+    // Update counts
+    const used = capacityUsed.get(volunteer.id) || 0;
+    capacityUsed.set(volunteer.id, used + 1);
+
+    if (volunteer.frequency === 'ONCE_A_WEEK') {
+      const weekIndex = getWeekIndex(shift.date);
+      const weeks = weeklyUsage.get(volunteer.id)!;
+      weeks.add(weekIndex);
+      weeklyUsage.set(volunteer.id, weeks);
+    }
+
+    const dtKey = dateTimeByShift.get(shift.id)!;
+    const dtSet = volunteerDateTimes.get(volunteer.id)!;
+    dtSet.add(dtKey);
+    volunteerDateTimes.set(volunteer.id, dtSet);
+
+    if (volunteer.skillLevel >= 2) {
+      shiftExpertsCount.set(shift.id, (shiftExpertsCount.get(shift.id) || 0) + 1);
+    } else if (volunteer.skillLevel === 1) {
+      shiftNovicesCount.set(shift.id, (shiftNovicesCount.get(shift.id) || 0) + 1);
+    }
+
+    assignments.push({
+      shiftId: shift.id,
+      volunteerId: volunteer.id,
+      reasoning: `${phaseLabel}: ${volunteer.name} (skill ${volunteer.skillLevel}) assigned to ${shift.date}`,
     });
+  };
 
-    for (const shift of sortedShifts) {
-      const currentAssignees = shiftAssignments.get(shift.id) || [];
+  const hasCapacityLeft = (v: Volunteer): boolean => {
+    const used = capacityUsed.get(v.id) || 0;
+    const capacity = getMonthlyCapacity(v.frequency);
+    return used < capacity;
+  };
 
-      // Max 5 volunteers per shift
-      if (currentAssignees.length >= 5) continue;
+  console.log('=== Phase 0: Feasibility & volunteer overview ===');
+  volunteers.forEach((v) => {
+    const feasibleCount = feasibleCountByVolunteer.get(v.id) || 0;
+    const cap = getMonthlyCapacity(v.frequency);
+    const skillLabel =
+      v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'EXPERT' : 'SENIOR';
+    console.log(
+      `  ${v.name} (${skillLabel}, freq: ${v.frequency}, cap: ${cap}, feasible shifts: ${feasibleCount})`
+    );
+  });
 
-      // Try to assign volunteers (in priority order: novices first, experts last)
-      for (const volunteer of sortedVolunteers) {
-        // Skip if already assigned to this shift
-        if (currentAssignees.includes(volunteer.id)) continue;
+  // ---- Phase 1: Experienced Backbone (skillLevel >= 2) ----
+  console.log('\n=== Phase 1: Experienced backbone (experts & seniors) ===');
+  const experiencedVols = volunteers.filter((v) => v.skillLevel >= 2);
+  const sortedExperienced = [...experiencedVols].sort((a, b) => {
+    const fa = feasibleCountByVolunteer.get(a.id) || 0;
+    const fb = feasibleCountByVolunteer.get(b.id) || 0;
+    if (fa !== fb) return fa - fb; // more constrained first
+    const capA = getMonthlyCapacity(a.frequency);
+    const capB = getMonthlyCapacity(b.frequency);
+    return capA - capB; // lower capacity first
+  });
 
-        // Check if volunteer can work this shift
-        if (!canWorkShift(volunteer, shift)) continue;
+  for (const v of sortedExperienced) {
+    console.log(
+      `  Considering ${v.name} (skill ${v.skillLevel}, feasible: ${
+        feasibleCountByVolunteer.get(v.id) || 0
+      })`
+    );
+    let assignedSomething = true;
+    while (hasCapacityLeft(v) && assignedSomething) {
+      assignedSomething = false;
 
-        // Assign!
-        assignments.push({
-          shiftId: shift.id,
-          volunteerId: volunteer.id,
-          reasoning: `Pass ${passNumber}: ${volunteer.name} (skill ${volunteer.skillLevel}) assigned to ${shift.date}`
-        });
+      const feasibleShifts = feasibleShiftsByVolunteer.get(v.id) || [];
+      const candidateShifts = feasibleShifts.filter((s) => canAssignToShift(v, s));
 
-        currentAssignees.push(volunteer.id);
-        shiftAssignments.set(shift.id, currentAssignees);
-        capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
-        assignmentsMade = true;
+      if (candidateShifts.length === 0) break;
 
-        // For passes 1-2, prioritize breadth (3 volunteers per shift)
-        // After that, continue adding to utilize all capacity
-        if (passNumber <= 2 && currentAssignees.length >= 3) {
-          break; // Move to next shift to spread volunteers
+      // Prefer shifts with no expert yet, then lowest currentAssignments, then earliest date
+      let bestShift: Shift | null = null;
+      for (const s of candidateShifts) {
+        const experts = shiftExpertsCount.get(s.id) || 0;
+        const assignees = shiftAssignments.get(s.id)!.length;
+        if (!bestShift) {
+          bestShift = s;
+          continue;
         }
+        const bestExperts = shiftExpertsCount.get(bestShift.id) || 0;
+        const bestAssignees = shiftAssignments.get(bestShift.id)!.length;
+
+        if (experts === 0 && bestExperts > 0) {
+          bestShift = s;
+        } else if (experts === bestExperts) {
+          if (assignees < bestAssignees) {
+            bestShift = s;
+          } else if (assignees === bestAssignees) {
+            if (s.date < bestShift.date) bestShift = s;
+          }
+        }
+      }
+
+      if (bestShift) {
+        assignVolunteerToShift(v, bestShift, 'Phase 1 (Backbone)');
+        assignedSomething = true;
+      }
+    }
+  }
+
+  // ---- Phase 2: Novice Priority (skillLevel === 1) ----
+  console.log('\n=== Phase 2: Novice priority ===');
+  const noviceVols = volunteers.filter((v) => v.skillLevel === 1);
+  const sortedNovices = [...noviceVols].sort((a, b) => {
+    const fa = feasibleCountByVolunteer.get(a.id) || 0;
+    const fb = feasibleCountByVolunteer.get(b.id) || 0;
+    if (fa !== fb) return fa - fb; // more constrained first
+    const capA = getMonthlyCapacity(a.frequency);
+    const capB = getMonthlyCapacity(b.frequency);
+    return capA - capB; // lower capacity first
+  });
+
+  for (const v of sortedNovices) {
+    console.log(
+      `  Considering novice ${v.name} (feasible: ${
+        feasibleCountByVolunteer.get(v.id) || 0
+      })`
+    );
+    let assignedSomething = true;
+    while (hasCapacityLeft(v) && assignedSomething) {
+      assignedSomething = false;
+
+      const feasibleShifts = feasibleShiftsByVolunteer.get(v.id) || [];
+      const candidateShifts = feasibleShifts.filter((s) => canAssignToShift(v, s));
+      if (candidateShifts.length === 0) break;
+
+      // Prefer shifts that already have an expert
+      const withExpert = candidateShifts.filter(
+        (s) => (shiftExpertsCount.get(s.id) || 0) >= 1
+      );
+      const pool = withExpert.length > 0 ? withExpert : candidateShifts;
+
+      let bestShift: Shift | null = null;
+      for (const s of pool) {
+        const assignees = shiftAssignments.get(s.id)!.length;
+        if (!bestShift) {
+          bestShift = s;
+          continue;
+        }
+        const bestAssignees = shiftAssignments.get(bestShift.id)!.length;
+
+        if (assignees < bestAssignees) {
+          bestShift = s;
+        } else if (assignees === bestAssignees) {
+          if (s.date < bestShift.date) bestShift = s;
+        }
+      }
+
+      if (bestShift) {
+        assignVolunteerToShift(v, bestShift, 'Phase 2 (Novice priority)');
+        assignedSomething = true;
+      }
+    }
+  }
+
+  // ---- Phase 3: Fair fill (all volunteers, still respecting all constraints) ----
+  console.log('\n=== Phase 3: Fair fill (all volunteers) ===');
+  const poolVolunteers = volunteers.filter((v) => {
+    const feasible = feasibleCountByVolunteer.get(v.id) || 0;
+    return feasible > 0 && hasCapacityLeft(v);
+  });
+
+  const sortedPool = [...poolVolunteers].sort((a, b) => {
+    const fa = feasibleCountByVolunteer.get(a.id) || 0;
+    const fb = feasibleCountByVolunteer.get(b.id) || 0;
+    if (fa !== fb) return fa - fb; // more constrained first
+
+    const usedA = capacityUsed.get(a.id) || 0;
+    const usedB = capacityUsed.get(b.id) || 0;
+    const capA = getMonthlyCapacity(a.frequency);
+    const capB = getMonthlyCapacity(b.frequency);
+    const remainingA = capA - usedA;
+    const remainingB = capB - usedB;
+    return remainingB - remainingA; // those with more remaining capacity first
+  });
+
+  let madeAssignment = true;
+  let passCount = 0;
+  while (madeAssignment) {
+    madeAssignment = false;
+    passCount++;
+    console.log(`  Phase 3 pass ${passCount}`);
+
+    for (const v of sortedPool) {
+      if (!hasCapacityLeft(v)) continue;
+
+      const feasibleShifts = feasibleShiftsByVolunteer.get(v.id) || [];
+      const candidateShifts = feasibleShifts.filter((s) => canAssignToShift(v, s));
+      if (candidateShifts.length === 0) continue;
+
+      let bestShift: Shift | null = null;
+
+      for (const s of candidateShifts) {
+        const assignees = shiftAssignments.get(s.id)!.length;
+        const experts = shiftExpertsCount.get(s.id) || 0;
+
+        if (!bestShift) {
+          bestShift = s;
+          continue;
+        }
+
+        const bestAssignees = shiftAssignments.get(bestShift.id)!.length;
+        const bestExperts = shiftExpertsCount.get(bestShift.id) || 0;
+
+        // For novices: prefer shifts with experts; for experts, prefer shifts lacking experts
+        if (v.skillLevel === 1) {
+          const sHasExpert = experts > 0;
+          const bestHasExpert = bestExperts > 0;
+          if (sHasExpert && !bestHasExpert) {
+            bestShift = s;
+            continue;
+          }
+          if (sHasExpert === bestHasExpert) {
+            if (assignees < bestAssignees) {
+              bestShift = s;
+            } else if (assignees === bestAssignees && s.date < bestShift.date) {
+              bestShift = s;
+            }
+          }
+        } else {
+          // expert/senior: prefer shifts with fewer experts
+          if (experts < bestExperts) {
+            bestShift = s;
+          } else if (experts === bestExperts) {
+            if (assignees < bestAssignees) {
+              bestShift = s;
+            } else if (assignees === bestAssignees && s.date < bestShift.date) {
+              bestShift = s;
+            }
+          }
+        }
+      }
+
+      if (bestShift) {
+        assignVolunteerToShift(v, bestShift, 'Phase 3 (Fair fill)');
+        madeAssignment = true;
       }
     }
 
-    passNumber++;
-
-    // Safety: max 20 passes (increased to ensure everyone gets to 100%)
-    if (passNumber > 20) {
-      console.warn('Reached maximum passes (20), stopping');
+    if (passCount > 30) {
+      console.warn('Phase 3: reached safety pass limit (30), stopping.');
       break;
     }
   }
 
-  // Report results
+  // ---- Final reporting (similar to your original) ----
   console.log('\n=== Final Results ===');
   console.log(`Total assignments: ${assignments.length}`);
   console.log('\nUtilization per volunteer:');
@@ -270,23 +535,29 @@ function scheduleShiftsMultiPass(
   let totalUsed = 0;
 
   capacityUsed.forEach((used, volId) => {
-    const volunteer = volunteers.find(v => v.id === volId);
+    const volunteer = volunteerById.get(volId);
     const capacity = getMonthlyCapacity(volunteer?.frequency || '');
     totalCapacity += capacity;
     totalUsed += used;
 
-    const skillLabel = volunteer?.skillLevel === 1 ? 'NOVICE' : volunteer?.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
-    const percentage = capacity > 0 ? Math.round(used/capacity*100) : 0;
+    const skillLabel =
+      volunteer?.skillLevel === 1
+        ? 'NOVICE'
+        : volunteer?.skillLevel === 2
+        ? 'EXPERT'
+        : 'SENIOR';
+    const percentage = capacity > 0 ? Math.round((used / capacity) * 100) : 0;
     console.log(`  ${volunteer?.name} (${skillLabel}): ${used}/${capacity} (${percentage}%)`);
   });
 
-  const overallUtilization = totalCapacity > 0 ? Math.round(totalUsed/totalCapacity*100) : 0;
+  const overallUtilization = totalCapacity > 0 ? Math.round((totalUsed / totalCapacity) * 100) : 0;
   console.log(`\nOverall utilization: ${totalUsed}/${totalCapacity} (${overallUtilization}%)`);
 
   console.log('\nShift coverage:');
   let emptyShifts = 0;
   let wellStaffed = 0;
-  shiftAssignments.forEach((assignees, shiftId) => {
+  shifts.forEach((shift) => {
+    const assignees = shiftAssignments.get(shift.id)!;
     if (assignees.length === 0) emptyShifts++;
     if (assignees.length >= 3) wellStaffed++;
   });
