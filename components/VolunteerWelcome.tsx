@@ -46,7 +46,7 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
         setAddress(volunteer.address || '');
 
         // Check if profile is complete
-        if (volunteer.name && volunteer.phone && volunteer.address) {
+        if (volunteer.name && volunteer.phone) {
           setProfileComplete(true);
         }
       } else {
@@ -72,7 +72,7 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
             setPhone(volunteer.phone || '');
             setAddress(volunteer.address || '');
 
-            if (volunteer.name && volunteer.phone && volunteer.address) {
+            if (volunteer.name && volunteer.phone) {
               setProfileComplete(true);
             }
           }
@@ -238,7 +238,7 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
               <label htmlFor="address" className="block text-sm font-medium text-slate-700 mb-2">
                 <div className="flex items-center gap-2">
                   <Home size={16} />
-                  Address
+                  Address <span className="text-slate-400 text-xs">(Optional)</span>
                 </div>
               </label>
               <textarea
@@ -246,9 +246,8 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                placeholder="Enter your address"
+                placeholder="Enter your address (optional)"
                 rows={3}
-                required
                 disabled={loading}
               />
             </div>
