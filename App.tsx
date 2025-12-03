@@ -15,17 +15,27 @@ const AppContent: React.FC = () => {
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
-  const [showPasswordSetup, setShowPasswordSetup] = useState(false);
-
-  // Check if this is a password setup flow (from magic link)
-  useEffect(() => {
+  const [showPasswordSetup, setShowPasswordSetup] = useState(() => {
+    // Check immediately on mount if this is a password setup flow
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
     const type = hashParams.get('type');
     const accessToken = hashParams.get('access_token');
 
     if (accessToken && (type === 'recovery' || type === 'invite')) {
-      setShowPasswordSetup(true);
+      // Store in sessionStorage so it persists through auth
+      sessionStorage.setItem('passwordSetupFlow', 'true');
+      return true;
     }
+
+    // Check if we're in a password setup flow from previous navigation
+    return sessionStorage.getItem('passwordSetupFlow') === 'true';
+  });
+
+  // Clear password setup flag when component unmounts or user completes setup
+  useEffect(() => {
+    return () => {
+      // Don't clear on unmount, only clear when explicitly completed
+    };
   }, []);
 
   // Load data from Supabase when user is authenticated

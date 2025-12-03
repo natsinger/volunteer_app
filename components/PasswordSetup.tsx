@@ -59,6 +59,9 @@ const PasswordSetup: React.FC = () => {
       console.log('Password updated successfully');
       setSuccess(true);
 
+      // Clear the password setup flag
+      sessionStorage.removeItem('passwordSetupFlow');
+
       // Redirect to the app after a short delay
       setTimeout(() => {
         window.location.href = '/';
