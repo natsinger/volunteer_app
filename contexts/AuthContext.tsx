@@ -11,6 +11,9 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error?: string; success?: boolean }>;
+  needsProfileCompletion: boolean;
+  setNeedsProfileCompletion: (value: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,6 +31,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userRole, setUserRole] = useState<'admin' | 'volunteer' | null>(null);
   const [volunteerData, setVolunteerData] = useState<Volunteer | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
 
   useEffect(() => {
     // Check active session
@@ -81,7 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (volunteerData && !volunteerError) {
         setUserRole('volunteer');
-        setVolunteerData(mapVolunteerFromDB(volunteerData));
+        const volunteer = mapVolunteerFromDB(volunteerData);
+        setVolunteerData(volunteer);
+
+        // Check if profile needs completion
+        const profileIncomplete = !volunteer.name || !volunteer.phone || !volunteer.address;
+        setNeedsProfileCompletion(profileIncomplete);
+
         setLoading(false);
         return;
       }
@@ -119,6 +129,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setUserRole(null);
     setVolunteerData(null);
+    setNeedsProfileCompletion(false);
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}`,
+      });
+
+      if (error) {
+        return { error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { error: 'An unexpected error occurred' };
+    }
   };
 
   const value = {
@@ -128,6 +155,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loading,
     signIn,
     signOut,
+    resetPassword,
+    needsProfileCompletion,
+    setNeedsProfileCompletion,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
