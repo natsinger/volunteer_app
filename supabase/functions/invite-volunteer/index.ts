@@ -65,8 +65,9 @@ serve(async (req) => {
         throw linkError
       }
 
+      console.log('Link data received:', JSON.stringify(linkData, null, 2))
       inviteUrl = linkData.properties.action_link
-      console.log('Magic link generated for existing user')
+      console.log('Magic link generated for existing user:', inviteUrl)
     } else {
       // Generate an invite link for new user
       const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
@@ -85,10 +86,11 @@ serve(async (req) => {
         throw linkError
       }
 
+      console.log('Link data received:', JSON.stringify(linkData, null, 2))
       // The user is created automatically when generating an invite link
       inviteUrl = linkData.properties.action_link
       userId = linkData.user.id
-      console.log(`New user created: ${userId}`)
+      console.log(`New user created: ${userId}, inviteUrl: ${inviteUrl}`)
     }
 
     // Link the auth user to the volunteer record
@@ -103,17 +105,20 @@ serve(async (req) => {
     }
 
     console.log(`Volunteer ${volunteerId} linked to user ${userId}`)
+    console.log(`generateLinkOnly: ${generateLinkOnly}, inviteUrl: ${inviteUrl}`)
 
     // If generateLinkOnly is true, just return the link without sending email
     if (generateLinkOnly) {
+      const response = {
+        success: true,
+        message: 'Magic link generated successfully',
+        userId,
+        inviteUrl,
+        method: 'magic_link',
+      }
+      console.log('Returning magic link response:', JSON.stringify(response, null, 2))
       return new Response(
-        JSON.stringify({
-          success: true,
-          message: 'Magic link generated successfully',
-          userId,
-          inviteUrl,
-          method: 'magic_link',
-        }),
+        JSON.stringify(response),
         {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200,
