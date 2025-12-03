@@ -60,6 +60,24 @@ export enum UserRole {
   GUEST = 'GUEST'
 }
 
+export interface SavedSchedule {
+  id: string;
+  name: string;
+  targetMonth: number; // 1-12
+  targetYear: number;
+  createdAt: string;
+  createdBy?: string;
+  notes?: string;
+}
+
+export interface SavedScheduleAssignment {
+  id: string;
+  scheduleId: string;
+  shiftId: string;
+  volunteerId: string;
+  createdAt: string;
+}
+
 export interface AppState {
   volunteers: Volunteer[];
   shifts: Shift[];

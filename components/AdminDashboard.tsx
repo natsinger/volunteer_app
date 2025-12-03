@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus
 } from 'lucide-react';
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment } from '../types';
 import { generateScheduleAI, getMonthlyCapacity } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
+import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -56,6 +57,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Delete Confirmation State
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'volunteer' | 'shift', id: string, name?: string } | null>(null);
 
+  // Schedule History State
+  const [savedSchedules, setSavedSchedules] = useState<SavedSchedule[]>([]);
+  const [showScheduleHistory, setShowScheduleHistory] = useState(false);
+  const [showSaveScheduleModal, setShowSaveScheduleModal] = useState(false);
+  const [scheduleNameInput, setScheduleNameInput] = useState('');
+  const [scheduleNotesInput, setScheduleNotesInput] = useState('');
+
   // Auto-Scheduler State: Default to Next Month
   const today = new Date();
   const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -66,7 +74,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   useEffect(() => {
     loadRecurringShifts();
     loadDeletedOccurrences();
+    loadScheduleHistory();
   }, []);
+
+  // Load last saved schedule for the selected month when it changes
+  useEffect(() => {
+    loadLastScheduleForMonth();
+  }, [targetMonth, targetYear]);
 
   // Generate displayed shifts whenever data changes
   useEffect(() => {
@@ -342,6 +356,121 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       console.error('Unexpected error during update:', err);
       alert('An unexpected error occurred while updating volunteer');
     }
+  };
+
+  // Schedule History Functions
+  const loadScheduleHistory = async () => {
+    const result = await loadSavedSchedules();
+    if (result.success && result.schedules) {
+      setSavedSchedules(result.schedules);
+    }
+  };
+
+  const loadLastScheduleForMonth = async () => {
+    const result = await getLatestScheduleForMonth(targetMonth, targetYear);
+    if (result.success && result.schedule && result.assignments) {
+      // Load the assignments into the current state
+      const assignments = result.assignments.map(a => ({
+        shiftId: a.shiftId,
+        volunteerId: a.volunteerId,
+      }));
+      setGeneratedAssignments(assignments);
+      setScheduleResultView('calendar');
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!scheduleNameInput.trim()) {
+      alert('Please enter a schedule name');
+      return;
+    }
+
+    if (generatedAssignments.length === 0) {
+      alert('No assignments to save');
+      return;
+    }
+
+    const result = await saveSchedule(
+      scheduleNameInput,
+      targetMonth,
+      targetYear,
+      generatedAssignments,
+      scheduleNotesInput
+    );
+
+    if (result.success) {
+      alert('Schedule saved successfully!');
+      setShowSaveScheduleModal(false);
+      setScheduleNameInput('');
+      setScheduleNotesInput('');
+      loadScheduleHistory();
+    } else {
+      alert(`Failed to save schedule: ${result.error}`);
+    }
+  };
+
+  const handleLoadSchedule = async (scheduleId: string) => {
+    const result = await loadScheduleAssignments(scheduleId);
+    if (result.success && result.assignments) {
+      const assignments = result.assignments.map(a => ({
+        shiftId: a.shiftId,
+        volunteerId: a.volunteerId,
+      }));
+      setGeneratedAssignments(assignments);
+      setScheduleResultView('calendar');
+      setShowScheduleHistory(false);
+
+      // Set the target month/year to match the loaded schedule
+      const schedule = savedSchedules.find(s => s.id === scheduleId);
+      if (schedule) {
+        setTargetMonth(schedule.targetMonth);
+        setTargetYear(schedule.targetYear);
+      }
+    } else {
+      alert(`Failed to load schedule: ${result.error}`);
+    }
+  };
+
+  const handleDeleteSchedule = async (scheduleId: string) => {
+    if (!confirm('Are you sure you want to delete this saved schedule?')) {
+      return;
+    }
+
+    const result = await deleteSchedule(scheduleId);
+    if (result.success) {
+      alert('Schedule deleted successfully');
+      loadScheduleHistory();
+    } else {
+      alert(`Failed to delete schedule: ${result.error}`);
+    }
+  };
+
+  // Assignment Management Functions
+  const handleAddVolunteerToShift = (shiftId: string, volunteerId: string) => {
+    // Check if already assigned
+    const isAlreadyAssigned = generatedAssignments.some(
+      a => a.shiftId === shiftId && a.volunteerId === volunteerId
+    );
+
+    if (isAlreadyAssigned) {
+      alert('This volunteer is already assigned to this shift');
+      return;
+    }
+
+    // Check if shift is at capacity (max 5)
+    const currentCount = generatedAssignments.filter(a => a.shiftId === shiftId).length;
+    if (currentCount >= 5) {
+      alert('This shift is already at maximum capacity (5 volunteers)');
+      return;
+    }
+
+    setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+  };
+
+  const handleRemoveVolunteerFromShift = (shiftId: string, volunteerId: string) => {
+    setGeneratedAssignments(prev =>
+      prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
+    );
   };
 
   const filteredVolunteers = volunteers.filter(v => 
@@ -944,15 +1073,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <BarChart3 size={16} /> Assignment Stats
                     </button>
                   </div>
-                  <button 
-                    onClick={() => {
-                       setScheduleResultView('none');
-                       setGeneratedAssignments([]); // Clear assignments on reset?
-                    }}
-                    className="text-sm text-slate-500 hover:text-red-500 flex items-center gap-1"
-                  >
-                    Reset View
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setShowScheduleHistory(true)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <History size={16} /> View History
+                    </button>
+                    <button
+                      onClick={() => setShowSaveScheduleModal(true)}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                    >
+                      <Save size={16} /> Save Schedule
+                    </button>
+                    <button
+                      onClick={() => {
+                         setScheduleResultView('none');
+                         setGeneratedAssignments([]);
+                      }}
+                      className="text-sm text-slate-500 hover:text-red-500 flex items-center gap-1"
+                    >
+                      Reset View
+                    </button>
+                  </div>
                 </div>
                 
                 {scheduleResultView === 'calendar' ? <CalendarView /> : <StatsView />}
@@ -962,61 +1105,141 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </main>
 
-      {/* Shift Details Modal (For Calendar Click) */}
+      {/* Enhanced Shift Details Modal with Editing (For Calendar Click) */}
       {selectedShiftForDetails && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative">
-            <button 
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 relative max-h-[90vh] overflow-y-auto">
+            <button
               onClick={() => setSelectedShiftForDetails(null)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
               <X size={20} />
             </button>
-            
+
             <div className="mb-6">
                <h2 className="text-xl font-bold text-slate-900">{selectedShiftForDetails.title}</h2>
                <div className="flex items-center gap-4 text-slate-500 mt-2">
                  <span className="flex items-center gap-1"><Calendar size={16} /> {selectedShiftForDetails.date}</span>
                  <span className="flex items-center gap-1"><Clock size={16} /> {selectedShiftForDetails.startTime} - {selectedShiftForDetails.endTime}</span>
+                 <span className="flex items-center gap-1"><MapPin size={16} /> {selectedShiftForDetails.location}</span>
                </div>
             </div>
 
-            <div className="mb-4">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">Assigned Volunteers</h3>
-              <div className="space-y-2">
-                 {generatedAssignments.filter(a => a.shiftId === selectedShiftForDetails.id).length > 0 ? (
-                    generatedAssignments
-                      .filter(a => a.shiftId === selectedShiftForDetails.id)
-                      .map((assignment, idx) => {
-                        const vol = volunteers.find(v => v.id === assignment.volunteerId);
-                        if (!vol) return null;
-                        return (
-                          <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
-                             <div className="flex items-center gap-3">
-                               <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-sm">
-                                 {vol.name.charAt(0)}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Assigned Volunteers */}
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <User size={16} /> Assigned Volunteers
+                </h3>
+                <div className="space-y-2">
+                   {generatedAssignments.filter(a => a.shiftId === selectedShiftForDetails.id).length > 0 ? (
+                      generatedAssignments
+                        .filter(a => a.shiftId === selectedShiftForDetails.id)
+                        .map((assignment, idx) => {
+                          const vol = volunteers.find(v => v.id === assignment.volunteerId);
+                          if (!vol) return null;
+                          return (
+                            <div key={idx} className="flex items-center justify-between p-2 bg-indigo-50 rounded-lg border border-indigo-200">
+                               <div className="flex items-center gap-2">
+                                 <div className="w-7 h-7 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-700 font-bold text-xs">
+                                   {vol.name.charAt(0)}
+                                 </div>
+                                 <div>
+                                   <div className="font-medium text-slate-900 text-sm">{vol.name}</div>
+                                   <div className="text-xs text-slate-500">
+                                     {vol.skillLevel === 3 ? 'Expert' : vol.skillLevel === 2 ? 'Mid' : 'Entry'}
+                                   </div>
+                                 </div>
                                </div>
-                               <div>
-                                 <div className="font-medium text-slate-900">{vol.name}</div>
-                                 <div className="text-xs text-slate-500">{vol.role} • {vol.phone}</div>
+                               <button
+                                 onClick={() => handleRemoveVolunteerFromShift(selectedShiftForDetails.id, vol.id)}
+                                 className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
+                                 title="Remove from shift"
+                               >
+                                 <UserMinus size={16} />
+                               </button>
+                            </div>
+                          );
+                        })
+                   ) : (
+                     <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
+                       No volunteers assigned yet.
+                     </div>
+                   )}
+                </div>
+              </div>
+
+              {/* Available Volunteers */}
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <UserPlus size={16} /> Available Volunteers
+                </h3>
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                   {(() => {
+                     // Get volunteers who are not fully assigned yet
+                     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+                     const assignedVolunteerIds = new Set(
+                       generatedAssignments
+                         .filter(a => a.shiftId === selectedShiftForDetails.id)
+                         .map(a => a.volunteerId)
+                     );
+
+                     const availableVolunteers = volunteers
+                       .filter(v => v.availabilityStatus === 'Active')
+                       .map(vol => {
+                         const capacity = getMonthlyCapacity(vol.frequency);
+                         const assignedCount = generatedAssignments.filter(a => {
+                           const shift = shifts.find(s => s.id === a.shiftId);
+                           return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
+                         }).length;
+                         const utilization = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
+
+                         return {
+                           ...vol,
+                           capacity,
+                           assignedCount,
+                           utilization,
+                           isAlreadyAssigned: assignedVolunteerIds.has(vol.id),
+                         };
+                       })
+                       .filter(v => !v.isAlreadyAssigned)
+                       .sort((a, b) => a.utilization - b.utilization); // Sort by utilization (lowest first)
+
+                     return availableVolunteers.length > 0 ? (
+                       availableVolunteers.map(vol => (
+                         <div key={vol.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                           <div className="flex items-center gap-2">
+                             <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-bold text-xs">
+                               {vol.name.charAt(0)}
+                             </div>
+                             <div>
+                               <div className="font-medium text-slate-900 text-sm">{vol.name}</div>
+                               <div className="text-xs text-slate-500">
+                                 {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
                                </div>
                              </div>
-                             <div className="text-xs text-slate-400 bg-white px-2 py-1 rounded border border-slate-200">
-                               {vol.skillLevel === 3 ? 'Expert' : vol.skillLevel === 2 ? 'Mid' : 'Entry'}
-                             </div>
-                          </div>
-                        );
-                      })
-                 ) : (
-                   <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg">
-                     No volunteers assigned to this shift yet.
-                   </div>
-                 )}
+                           </div>
+                           <button
+                             onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
+                             className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
+                             title="Add to shift"
+                           >
+                             <UserPlus size={16} />
+                           </button>
+                         </div>
+                       ))
+                     ) : (
+                       <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
+                         All volunteers are assigned.
+                       </div>
+                     );
+                   })()}
+                </div>
               </div>
             </div>
 
             <div className="flex justify-end mt-6">
-              <button 
+              <button
                 onClick={() => setSelectedShiftForDetails(null)}
                 className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700"
               >
@@ -1190,10 +1413,162 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {showBulkUpload && (
-        <BulkUploadModal 
-          onClose={() => setShowBulkUpload(false)} 
-          onUpload={handleBulkUpload} 
+        <BulkUploadModal
+          onClose={() => setShowBulkUpload(false)}
+          onUpload={handleBulkUpload}
         />
+      )}
+
+      {/* Save Schedule Modal */}
+      {showSaveScheduleModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setShowSaveScheduleModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Save size={24} className="text-emerald-600" /> Save Schedule
+              </h2>
+              <p className="text-sm text-slate-500 mt-2">
+                Save this schedule to view or restore later
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Schedule Name</label>
+                <input
+                  type="text"
+                  className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={scheduleNameInput}
+                  onChange={(e) => setScheduleNameInput(e.target.value)}
+                  placeholder={`Schedule for ${targetMonth}/${targetYear}`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes (Optional)</label>
+                <textarea
+                  className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  rows={3}
+                  value={scheduleNotesInput}
+                  onChange={(e) => setScheduleNotesInput(e.target.value)}
+                  placeholder="Add any notes about this schedule..."
+                />
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <div className="text-sm text-slate-600">
+                  <div className="flex justify-between mb-1">
+                    <span>Target Month:</span>
+                    <span className="font-medium">{targetMonth}/{targetYear}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Assignments:</span>
+                    <span className="font-medium">{generatedAssignments.length} shifts assigned</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowSaveScheduleModal(false)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSchedule}
+                className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700"
+              >
+                Save Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule History Modal */}
+      {showScheduleHistory && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowScheduleHistory(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <History size={24} className="text-indigo-600" /> Schedule History
+              </h2>
+              <p className="text-sm text-slate-500 mt-2">
+                View and restore previously saved schedules
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {savedSchedules.length > 0 ? (
+                savedSchedules.map(schedule => (
+                  <div key={schedule.id} className="bg-slate-50 rounded-lg border border-slate-200 p-4 hover:bg-slate-100 transition-colors">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-bold text-slate-900">{schedule.name}</h3>
+                          <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-medium rounded">
+                            {schedule.targetMonth}/{schedule.targetYear}
+                          </span>
+                        </div>
+                        {schedule.notes && (
+                          <p className="text-sm text-slate-600 mb-2">{schedule.notes}</p>
+                        )}
+                        <div className="text-xs text-slate-500">
+                          Saved on {new Date(schedule.createdAt).toLocaleDateString()} at {new Date(schedule.createdAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleLoadSchedule(schedule.id)}
+                          className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+                        >
+                          Load
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSchedule(schedule.id)}
+                          className="px-3 py-1.5 text-red-600 hover:bg-red-50 text-sm rounded-lg font-medium transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 text-slate-400">
+                  <History size={48} className="mx-auto mb-3 opacity-50" />
+                  <p className="text-lg font-medium">No saved schedules yet</p>
+                  <p className="text-sm mt-1">Generate and save a schedule to see it here</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => setShowScheduleHistory(false)}
+                className="px-4 py-2 bg-slate-600 text-white rounded-lg font-medium hover:bg-slate-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
