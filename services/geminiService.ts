@@ -17,7 +17,7 @@ export const getMonthlyCapacity = (frequency: string): number => {
 };
 
 // Helper to get the specific day code (0, 1, 2_morning, 2_evening, etc.)
-const getShiftDayCode = (dateStr: string, timeStr: string): string => {
+export const getShiftDayCode = (dateStr: string, timeStr: string): string => {
   const date = new Date(dateStr);
   const day = date.getDay(); // 0 = Sunday
 
@@ -29,6 +29,32 @@ const getShiftDayCode = (dateStr: string, timeStr: string): string => {
   }
 
   return day.toString();
+};
+
+/**
+ * Check if a volunteer can work a specific shift based on availability preferences
+ * This checks: location, day preference, blackout dates, and only dates
+ * Note: This does NOT check capacity - that should be checked separately
+ */
+export const canVolunteerWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
+  // Check location compatibility
+  if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
+    if (volunteer.preferredLocation !== shift.location) return false;
+  }
+
+  // Check day preference
+  const dayCode = getShiftDayCode(shift.date, shift.startTime);
+  if (!volunteer.preferredDays.includes(dayCode)) return false;
+
+  // Check blackout dates
+  if (volunteer.blackoutDates.includes(shift.date)) return false;
+
+  // Check only dates - if specified, volunteer can ONLY work these specific dates
+  if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
+    return false;
+  }
+
+  return true;
 };
 
 /**
