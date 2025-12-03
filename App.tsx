@@ -4,6 +4,7 @@ import AdminDashboard from './components/AdminDashboard';
 import VolunteerDashboard from './components/VolunteerDashboard';
 import LoginForm from './components/LoginForm';
 import VolunteerWelcome from './components/VolunteerWelcome';
+import PasswordSetup from './components/PasswordSetup';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB, mapVolunteerToDB, mapShiftToDB } from './lib/mappers';
@@ -14,6 +15,18 @@ const AppContent: React.FC = () => {
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
+  const [showPasswordSetup, setShowPasswordSetup] = useState(false);
+
+  // Check if this is a password setup flow (from magic link)
+  useEffect(() => {
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const type = hashParams.get('type');
+    const accessToken = hashParams.get('access_token');
+
+    if (accessToken && (type === 'recovery' || type === 'invite')) {
+      setShowPasswordSetup(true);
+    }
+  }, []);
 
   // Load data from Supabase when user is authenticated
   useEffect(() => {
@@ -52,6 +65,11 @@ const AppContent: React.FC = () => {
       setDataLoading(false);
     }
   };
+
+  // Show password setup page if arriving from magic link
+  if (showPasswordSetup) {
+    return <PasswordSetup />;
+  }
 
   if (loading || (user && dataLoading)) {
     return (
