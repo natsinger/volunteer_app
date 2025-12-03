@@ -26,6 +26,8 @@ const InviteVolunteerModal: React.FC<InviteVolunteerModalProps> = ({
     setError('');
 
     try {
+      console.log('🔗 Generating magic link for:', volunteer.email);
+
       // Call Supabase Edge Function to generate magic link
       const { data, error: functionError } = await supabase.functions.invoke('invite-volunteer', {
         body: {
@@ -36,21 +38,29 @@ const InviteVolunteerModal: React.FC<InviteVolunteerModalProps> = ({
         },
       });
 
+      console.log('📦 Response:', { data, functionError });
+
       if (functionError) {
+        console.error('❌ Function error:', functionError);
         throw functionError;
       }
 
-      if (data.error) {
+      if (data?.error) {
+        console.error('❌ Data error:', data.error);
         throw new Error(data.error);
       }
 
-      if (data.inviteUrl) {
+      if (data?.inviteUrl) {
+        console.log('✅ Magic link generated:', data.inviteUrl);
         setMagicLink(data.inviteUrl);
         setSuccess(true);
+      } else {
+        console.error('❌ No invite URL in response:', data);
+        throw new Error('No invite URL returned from server. Check the edge function logs.');
       }
     } catch (err: any) {
-      console.error('Error generating magic link:', err);
-      setError(err.message || 'Failed to generate magic link. Please try the manual method below.');
+      console.error('❌ Error generating magic link:', err);
+      setError(err.message || 'Failed to generate magic link. Check the browser console for details.');
     } finally {
       setLoading(false);
     }
