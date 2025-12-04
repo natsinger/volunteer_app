@@ -201,15 +201,66 @@ export const createSwitchRequest = async (
 };
 
 /**
+ * Auto-cancel expired switch requests (where shift date has passed)
+ */
+const cleanupExpiredRequests = async (): Promise<void> => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get all pending requests with their shift dates
+    const { data: requests, error: fetchError } = await supabase
+      .from('shift_switch_requests')
+      .select(`
+        id,
+        shift_id,
+        shifts!inner(date)
+      `)
+      .eq('status', 'pending');
+
+    if (fetchError) {
+      console.error('Error fetching requests for cleanup:', fetchError);
+      return;
+    }
+
+    if (!requests || requests.length === 0) return;
+
+    // Find requests where shift date has passed
+    const expiredRequestIds = requests
+      .filter((r: any) => r.shifts && r.shifts.date < today)
+      .map((r: any) => r.id);
+
+    if (expiredRequestIds.length > 0) {
+      // Cancel expired requests
+      const { error: updateError } = await supabase
+        .from('shift_switch_requests')
+        .update({ status: 'cancelled' })
+        .in('id', expiredRequestIds);
+
+      if (updateError) {
+        console.error('Error cancelling expired requests:', updateError);
+      } else {
+        console.log(`Auto-cancelled ${expiredRequestIds.length} expired switch requests`);
+      }
+    }
+  } catch (err) {
+    console.error('Exception in cleanupExpiredRequests:', err);
+  }
+};
+
+/**
  * Get all pending switch requests (for admin or volunteer dashboard)
+ * Automatically cleans up expired requests before returning
  */
 export const getPendingSwitchRequests = async (): Promise<ShiftSwitchRequest[]> => {
   try {
+    // Clean up expired requests first
+    await cleanupExpiredRequests();
+
     const { data, error } = await supabase
       .from('shift_switch_requests')
       .select('*')
       .eq('status', 'pending')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false});
 
     if (error) {
       console.error('Error fetching switch requests:', error);
@@ -225,11 +276,15 @@ export const getPendingSwitchRequests = async (): Promise<ShiftSwitchRequest[]> 
 
 /**
  * Get switch requests for a specific volunteer
+ * Automatically cleans up expired requests before returning
  */
 export const getVolunteerSwitchRequests = async (
   volunteerId: string
 ): Promise<ShiftSwitchRequest[]> => {
   try {
+    // Clean up expired requests first
+    await cleanupExpiredRequests();
+
     const { data, error } = await supabase
       .from('shift_switch_requests')
       .select('*')
