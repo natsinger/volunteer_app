@@ -4,7 +4,7 @@ import {
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment } from '../types';
-import { generateScheduleAI, getMonthlyCapacity } from '../services/geminiService';
+import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import { supabase } from '../lib/supabase';
@@ -1195,6 +1195,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                      const availableVolunteers = volunteers
                        .filter(v => v.availabilityStatus === 'Active')
+                       .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails)) // Only show volunteers who can work this shift
                        .map(vol => {
                          const capacity = getMonthlyCapacity(vol.frequency);
                          const assignedCount = generatedAssignments.filter(a => {
@@ -1239,7 +1240,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                        ))
                      ) : (
                        <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
-                         All volunteers are assigned.
+                         No available volunteers for this shift.
                        </div>
                      );
                    })()}
