@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat
 } from 'lucide-react';
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest } from '../types';
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
@@ -12,6 +12,7 @@ import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, map
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
+import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests } from '../services/shiftAssignmentService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -33,7 +34,8 @@ const DAYS = [
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   volunteers, shifts, setVolunteers, setShifts
 }) => {
-  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto'>('volunteers');
+  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto' | 'switchRequests'>('volunteers');
+  const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [scheduleResultView, setScheduleResultView] = useState<'none' | 'calendar' | 'stats'>('none');
@@ -77,6 +79,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     loadRecurringShifts();
     loadDeletedOccurrences();
     loadScheduleHistory();
+    loadSwitchRequests();
   }, []);
 
   // Load last saved schedule for the selected month when it changes
@@ -91,6 +94,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const merged = mergeShifts(generatedShifts, shifts);
     setDisplayedShifts(merged);
   }, [recurringShifts, deletedOccurrences, shifts, targetMonth, targetYear]);
+
+  // Load existing assignments from database when month changes
+  useEffect(() => {
+    loadExistingAssignments();
+  }, [targetMonth, targetYear, displayedShifts]);
 
   const loadRecurringShifts = async () => {
     try {
@@ -119,6 +127,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const loadSwitchRequests = async () => {
+    try {
+      const requests = await getPendingSwitchRequests();
+      setSwitchRequests(requests);
+    } catch (error) {
+      console.error('Error loading switch requests:', error);
+    }
+  };
+
   const handleGenerateSchedule = async () => {
     setIsGenerating(true);
     try {
@@ -140,6 +157,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // We need a place to store the assignments since the Shift type is 1-to-1
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
+  const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
+  const [assignmentsApplied, setAssignmentsApplied] = useState(false);
 
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
@@ -381,6 +400,74 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Load existing assignments from the database
+  const loadExistingAssignments = async () => {
+    if (displayedShifts.length === 0) return;
+
+    const shiftIds = displayedShifts.map(s => s.id);
+    const dbAssignments = await getShiftAssignments(shiftIds);
+
+    // Convert to the format expected by generatedAssignments
+    const assignments = dbAssignments.map(a => ({
+      shiftId: a.shiftId,
+      volunteerId: a.volunteerId,
+    }));
+
+    if (assignments.length > 0) {
+      setGeneratedAssignments(assignments);
+      setAssignmentsApplied(true);
+      setScheduleResultView('calendar');
+    }
+  };
+
+  // Apply assignments to database so volunteers can see their shifts
+  const handleApplyAssignments = async () => {
+    if (generatedAssignments.length === 0) {
+      alert('No assignments to apply');
+      return;
+    }
+
+    if (!confirm('Apply these assignments to the database? Volunteers will be able to see their shifts.')) {
+      return;
+    }
+
+    setIsApplyingAssignments(true);
+    try {
+      const result = await applyScheduleAssignments(generatedAssignments);
+
+      if (result.success) {
+        alert('Assignments applied successfully! Volunteers can now see their shifts.');
+        setAssignmentsApplied(true);
+      } else {
+        alert(`Failed to apply assignments: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Exception applying assignments:', err);
+      alert('An error occurred while applying assignments');
+    } finally {
+      setIsApplyingAssignments(false);
+    }
+  };
+
+  // Clear all assignments for the current month
+  const handleClearAssignments = async () => {
+    if (!confirm('Clear all assignments for this month? This will remove all volunteer assignments from the database.')) {
+      return;
+    }
+
+    const shiftIds = displayedShifts.map(s => s.id);
+    const result = await clearMonthAssignments(shiftIds);
+
+    if (result.success) {
+      alert('Assignments cleared successfully');
+      setGeneratedAssignments([]);
+      setAssignmentsApplied(false);
+      setScheduleResultView('none');
+    } else {
+      alert(`Failed to clear assignments: ${result.error}`);
+    }
+  };
+
   const handleSaveSchedule = async () => {
     if (!scheduleNameInput.trim()) {
       alert('Please enter a schedule name');
@@ -448,7 +535,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // Assignment Management Functions
-  const handleAddVolunteerToShift = (shiftId: string, volunteerId: string) => {
+  const handleAddVolunteerToShift = async (shiftId: string, volunteerId: string) => {
     // Check if already assigned
     const isAlreadyAssigned = generatedAssignments.some(
       a => a.shiftId === shiftId && a.volunteerId === volunteerId
@@ -466,13 +553,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
+    // Update local state
     setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+
+    // Update database
+    const result = await dbAddVolunteerToShift(shiftId, volunteerId);
+    if (!result.success) {
+      console.error('Failed to add volunteer to shift in database:', result.error);
+      // Rollback local state
+      setGeneratedAssignments(prev => prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId)));
+      alert('Failed to assign volunteer. Please try again.');
+    }
   };
 
-  const handleRemoveVolunteerFromShift = (shiftId: string, volunteerId: string) => {
+  const handleRemoveVolunteerFromShift = async (shiftId: string, volunteerId: string) => {
+    // Update local state
     setGeneratedAssignments(prev =>
       prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
     );
+
+    // Update database
+    const result = await dbRemoveVolunteerFromShift(shiftId, volunteerId);
+    if (!result.success) {
+      console.error('Failed to remove volunteer from shift in database:', result.error);
+      // Rollback local state
+      setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+      alert('Failed to remove volunteer. Please try again.');
+    }
   };
 
   const filteredVolunteers = volunteers.filter(v => 
@@ -714,11 +821,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <Calendar size={18} /> Shifts
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('auto')}
             className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'auto' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
           >
             <Sparkles size={18} /> Auto-Schedule
+          </button>
+          <button
+            onClick={() => setActiveTab('switchRequests')}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'switchRequests' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            <Repeat size={18} /> Switch Requests {switchRequests.length > 0 && <span className="ml-1 bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">{switchRequests.length}</span>}
           </button>
         </div>
       </header>
@@ -1090,24 +1203,107 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <History size={16} /> View History
                     </button>
                     <button
+                      onClick={handleApplyAssignments}
+                      disabled={isApplyingAssignments || assignmentsApplied}
+                      className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
+                        assignmentsApplied
+                          ? 'bg-green-100 text-green-700 cursor-not-allowed'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                      title={assignmentsApplied ? 'Assignments already applied to database' : 'Apply assignments so volunteers can see their shifts'}
+                    >
+                      <CheckCircle size={16} /> {assignmentsApplied ? 'Applied' : isApplyingAssignments ? 'Applying...' : 'Apply to Database'}
+                    </button>
+                    <button
                       onClick={() => setShowSaveScheduleModal(true)}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
                     >
-                      <Save size={16} /> Save Schedule
+                      <Save size={16} /> Save to History
                     </button>
                     <button
-                      onClick={() => {
-                         setScheduleResultView('none');
-                         setGeneratedAssignments([]);
-                      }}
-                      className="text-sm text-slate-500 hover:text-red-500 flex items-center gap-1"
+                      onClick={handleClearAssignments}
+                      className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
                     >
-                      Reset View
+                      <X size={16} /> Clear All
                     </button>
                   </div>
                 </div>
                 
                 {scheduleResultView === 'calendar' ? <CalendarView /> : <StatsView />}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Switch Requests Tab */}
+        {activeTab === 'switchRequests' && (
+          <div className="max-w-7xl mx-auto animate-fade-in">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Shift Switch Requests</h2>
+                <p className="text-slate-500 text-sm mt-1">View all pending shift switch requests from volunteers</p>
+              </div>
+              <button
+                onClick={loadSwitchRequests}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
+              >
+                <RefreshCw size={16} /> Refresh
+              </button>
+            </div>
+
+            {switchRequests.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed border-slate-200">
+                <Repeat size={48} className="mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">No Pending Switch Requests</h3>
+                <p className="text-slate-500">When volunteers request to switch shifts, they'll appear here.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {switchRequests.map(request => {
+                  const shift = shifts.find(s => s.id === request.shiftId);
+                  const requestingVolunteer = volunteers.find(v => v.id === request.requestingVolunteerId);
+                  const targetVolunteer = request.targetVolunteerId ? volunteers.find(v => v.id === request.targetVolunteerId) : null;
+
+                  if (!shift || !requestingVolunteer) return null;
+
+                  return (
+                    <div key={request.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h4 className="font-bold text-slate-900">{shift.title}</h4>
+                          <p className="text-sm text-slate-500 mt-1">{shift.date} • {shift.startTime} - {shift.endTime}</p>
+                          {shift.location && (
+                            <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                              <MapPin size={12} />
+                              {shift.location}
+                            </p>
+                          )}
+                        </div>
+                        <span className="bg-amber-50 text-amber-700 text-xs px-2.5 py-1 rounded-full font-semibold">
+                          {request.status.toUpperCase()}
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg mb-3">
+                        <p className="text-xs text-slate-500 mb-1">Requested by:</p>
+                        <p className="text-sm font-medium text-slate-900">{requestingVolunteer.name}</p>
+                        <p className="text-xs text-slate-500">{requestingVolunteer.email}</p>
+                      </div>
+
+                      {request.message && (
+                        <div className="bg-blue-50 p-3 rounded-lg mb-3 border border-blue-100">
+                          <p className="text-xs text-blue-600 mb-1">Message:</p>
+                          <p className="text-sm text-blue-900 italic">"{request.message}"</p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 text-xs text-slate-400 mt-3">
+                        <Clock size={12} />
+                        Requested {new Date(request.createdAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

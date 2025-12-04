@@ -78,6 +78,28 @@ export interface SavedScheduleAssignment {
   createdAt: string;
 }
 
+export interface ShiftAssignment {
+  id: string;
+  shiftId: string;
+  volunteerId: string;
+  status: 'assigned' | 'completed' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShiftSwitchRequest {
+  id: string;
+  shiftId: string;
+  requestingVolunteerId: string;
+  targetVolunteerId: string | null;
+  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
+  message: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+}
+
 export interface AppState {
   volunteers: Volunteer[];
   shifts: Shift[];
