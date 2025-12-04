@@ -12,6 +12,7 @@ import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, map
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
+import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments } from '../services/shiftAssignmentService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -92,6 +93,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setDisplayedShifts(merged);
   }, [recurringShifts, deletedOccurrences, shifts, targetMonth, targetYear]);
 
+  // Load existing assignments from database when month changes
+  useEffect(() => {
+    loadExistingAssignments();
+  }, [targetMonth, targetYear, displayedShifts]);
+
   const loadRecurringShifts = async () => {
     try {
       const { data, error } = await supabase
@@ -140,6 +146,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // We need a place to store the assignments since the Shift type is 1-to-1
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
+  const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
+  const [assignmentsApplied, setAssignmentsApplied] = useState(false);
 
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
@@ -381,6 +389,74 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Load existing assignments from the database
+  const loadExistingAssignments = async () => {
+    if (displayedShifts.length === 0) return;
+
+    const shiftIds = displayedShifts.map(s => s.id);
+    const dbAssignments = await getShiftAssignments(shiftIds);
+
+    // Convert to the format expected by generatedAssignments
+    const assignments = dbAssignments.map(a => ({
+      shiftId: a.shiftId,
+      volunteerId: a.volunteerId,
+    }));
+
+    if (assignments.length > 0) {
+      setGeneratedAssignments(assignments);
+      setAssignmentsApplied(true);
+      setScheduleResultView('calendar');
+    }
+  };
+
+  // Apply assignments to database so volunteers can see their shifts
+  const handleApplyAssignments = async () => {
+    if (generatedAssignments.length === 0) {
+      alert('No assignments to apply');
+      return;
+    }
+
+    if (!confirm('Apply these assignments to the database? Volunteers will be able to see their shifts.')) {
+      return;
+    }
+
+    setIsApplyingAssignments(true);
+    try {
+      const result = await applyScheduleAssignments(generatedAssignments);
+
+      if (result.success) {
+        alert('Assignments applied successfully! Volunteers can now see their shifts.');
+        setAssignmentsApplied(true);
+      } else {
+        alert(`Failed to apply assignments: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Exception applying assignments:', err);
+      alert('An error occurred while applying assignments');
+    } finally {
+      setIsApplyingAssignments(false);
+    }
+  };
+
+  // Clear all assignments for the current month
+  const handleClearAssignments = async () => {
+    if (!confirm('Clear all assignments for this month? This will remove all volunteer assignments from the database.')) {
+      return;
+    }
+
+    const shiftIds = displayedShifts.map(s => s.id);
+    const result = await clearMonthAssignments(shiftIds);
+
+    if (result.success) {
+      alert('Assignments cleared successfully');
+      setGeneratedAssignments([]);
+      setAssignmentsApplied(false);
+      setScheduleResultView('none');
+    } else {
+      alert(`Failed to clear assignments: ${result.error}`);
+    }
+  };
+
   const handleSaveSchedule = async () => {
     if (!scheduleNameInput.trim()) {
       alert('Please enter a schedule name');
@@ -448,7 +524,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // Assignment Management Functions
-  const handleAddVolunteerToShift = (shiftId: string, volunteerId: string) => {
+  const handleAddVolunteerToShift = async (shiftId: string, volunteerId: string) => {
     // Check if already assigned
     const isAlreadyAssigned = generatedAssignments.some(
       a => a.shiftId === shiftId && a.volunteerId === volunteerId
@@ -466,13 +542,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
+    // Update local state
     setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+
+    // Update database
+    const result = await dbAddVolunteerToShift(shiftId, volunteerId);
+    if (!result.success) {
+      console.error('Failed to add volunteer to shift in database:', result.error);
+      // Rollback local state
+      setGeneratedAssignments(prev => prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId)));
+      alert('Failed to assign volunteer. Please try again.');
+    }
   };
 
-  const handleRemoveVolunteerFromShift = (shiftId: string, volunteerId: string) => {
+  const handleRemoveVolunteerFromShift = async (shiftId: string, volunteerId: string) => {
+    // Update local state
     setGeneratedAssignments(prev =>
       prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
     );
+
+    // Update database
+    const result = await dbRemoveVolunteerFromShift(shiftId, volunteerId);
+    if (!result.success) {
+      console.error('Failed to remove volunteer from shift in database:', result.error);
+      // Rollback local state
+      setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+      alert('Failed to remove volunteer. Please try again.');
+    }
   };
 
   const filteredVolunteers = volunteers.filter(v => 
@@ -1090,19 +1186,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <History size={16} /> View History
                     </button>
                     <button
+                      onClick={handleApplyAssignments}
+                      disabled={isApplyingAssignments || assignmentsApplied}
+                      className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
+                        assignmentsApplied
+                          ? 'bg-green-100 text-green-700 cursor-not-allowed'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                      title={assignmentsApplied ? 'Assignments already applied to database' : 'Apply assignments so volunteers can see their shifts'}
+                    >
+                      <CheckCircle size={16} /> {assignmentsApplied ? 'Applied' : isApplyingAssignments ? 'Applying...' : 'Apply to Database'}
+                    </button>
+                    <button
                       onClick={() => setShowSaveScheduleModal(true)}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
                     >
-                      <Save size={16} /> Save Schedule
+                      <Save size={16} /> Save to History
                     </button>
                     <button
-                      onClick={() => {
-                         setScheduleResultView('none');
-                         setGeneratedAssignments([]);
-                      }}
-                      className="text-sm text-slate-500 hover:text-red-500 flex items-center gap-1"
+                      onClick={handleClearAssignments}
+                      className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
                     >
-                      Reset View
+                      <X size={16} /> Clear All
                     </button>
                   </div>
                 </div>

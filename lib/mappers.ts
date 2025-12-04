@@ -1,4 +1,4 @@
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, ShiftAssignment, ShiftSwitchRequest } from '../types';
 
 // Database row interfaces (snake_case as returned from Supabase)
 interface VolunteerRow {
@@ -159,4 +159,70 @@ export const mapDeletedOccurrenceToDB = (occurrence: DeletedShiftOccurrence): Pa
   id: occurrence.id,
   recurring_shift_id: occurrence.recurringShiftId,
   deleted_date: occurrence.deletedDate,
+});
+
+interface ShiftAssignmentRow {
+  id: string;
+  shift_id: string;
+  volunteer_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ShiftSwitchRequestRow {
+  id: string;
+  shift_id: string;
+  requesting_volunteer_id: string;
+  target_volunteer_id: string | null;
+  status: string;
+  message: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+// Map database shift assignment row to TypeScript ShiftAssignment interface
+export const mapShiftAssignmentFromDB = (row: ShiftAssignmentRow): ShiftAssignment => ({
+  id: row.id,
+  shiftId: row.shift_id,
+  volunteerId: row.volunteer_id,
+  status: row.status as 'assigned' | 'completed' | 'cancelled',
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+// Map TypeScript ShiftAssignment to database row format
+export const mapShiftAssignmentToDB = (assignment: ShiftAssignment): Partial<ShiftAssignmentRow> => ({
+  id: assignment.id,
+  shift_id: assignment.shiftId,
+  volunteer_id: assignment.volunteerId,
+  status: assignment.status,
+});
+
+// Map database shift switch request row to TypeScript ShiftSwitchRequest interface
+export const mapShiftSwitchRequestFromDB = (row: ShiftSwitchRequestRow): ShiftSwitchRequest => ({
+  id: row.id,
+  shiftId: row.shift_id,
+  requestingVolunteerId: row.requesting_volunteer_id,
+  targetVolunteerId: row.target_volunteer_id,
+  status: row.status as 'pending' | 'accepted' | 'rejected' | 'cancelled',
+  message: row.message,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  resolvedAt: row.resolved_at,
+  resolvedBy: row.resolved_by,
+});
+
+// Map TypeScript ShiftSwitchRequest to database row format
+export const mapShiftSwitchRequestToDB = (request: ShiftSwitchRequest): Partial<ShiftSwitchRequestRow> => ({
+  id: request.id,
+  shift_id: request.shiftId,
+  requesting_volunteer_id: request.requestingVolunteerId,
+  target_volunteer_id: request.targetVolunteerId,
+  status: request.status,
+  message: request.message,
+  resolved_at: request.resolvedAt,
+  resolved_by: request.resolvedBy,
 });

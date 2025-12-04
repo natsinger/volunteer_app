@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Calendar, Clock, MapPin, Check, Plus, Trash2, X } from 'lucide-react';
-import { Volunteer, Shift } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw } from 'lucide-react';
+import { Volunteer, Shift, ShiftAssignment } from '../types';
+import { getVolunteerAssignments } from '../services/shiftAssignmentService';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -22,24 +23,50 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<Volunteer>(currentUser);
   const [newBlackoutDate, setNewBlackoutDate] = useState('');
+  const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
+  const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
 
-  // Filter shifts for the current week (Today -> End of current week)
-  const isShiftThisWeek = (dateStr: string) => {
-    const today = new Date();
-    const currentDay = today.getDay(); // 0-6
-    
-    // Calculate end of week (Saturday)
-    const endOfWeek = new Date(today);
-    endOfWeek.setDate(today.getDate() + (6 - currentDay));
-    
-    const todayStr = today.toISOString().split('T')[0];
-    const endOfWeekStr = endOfWeek.toISOString().split('T')[0];
+  // Load volunteer's assignments from database
+  useEffect(() => {
+    loadMyAssignments();
+  }, [currentUser.id]);
 
-    return dateStr >= todayStr && dateStr <= endOfWeekStr;
+  const loadMyAssignments = async () => {
+    setIsLoadingAssignments(true);
+    try {
+      const assignments = await getVolunteerAssignments(currentUser.id);
+      setMyAssignments(assignments);
+    } catch (error) {
+      console.error('Error loading assignments:', error);
+    } finally {
+      setIsLoadingAssignments(false);
+    }
   };
 
-  const myShifts = shifts.filter(s => s.assignedVolunteerId === currentUser.id && isShiftThisWeek(s.date));
-  const openShifts = shifts.filter(s => s.status === 'Open' && isShiftThisWeek(s.date));
+  // Filter shifts for the upcoming month (Today -> +30 days)
+  const isShiftUpcoming = (dateStr: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(today);
+    endDate.setDate(today.getDate() + 30);
+
+    const shiftDate = new Date(dateStr);
+
+    return shiftDate >= today && shiftDate <= endDate;
+  };
+
+  // Get my shifts by matching assignments with shift data
+  const myShiftIds = new Set(myAssignments.map(a => a.shiftId));
+  const myShifts = shifts
+    .filter(s => myShiftIds.has(s.id) && isShiftUpcoming(s.date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Show open shifts that the volunteer could potentially work
+  const openShifts = shifts
+    .filter(s => s.status === 'Open' && isShiftUpcoming(s.date) && !myShiftIds.has(s.id))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 5); // Limit to 5 open shifts
 
   const handleSave = () => {
     updateVolunteer(editForm);
@@ -116,16 +143,31 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+
           {/* My Upcoming Shifts */}
           <div className="lg:col-span-2 space-y-6">
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <Calendar className="text-indigo-600" /> My Upcoming Shifts (This Week)
-            </h2>
-            
-            {myShifts.length === 0 ? (
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Calendar className="text-indigo-600" /> My Upcoming Shifts (Next 30 Days)
+              </h2>
+              <button
+                onClick={loadMyAssignments}
+                disabled={isLoadingAssignments}
+                className="text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg transition-colors"
+                title="Refresh shifts"
+              >
+                <RefreshCw size={18} className={isLoadingAssignments ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            {isLoadingAssignments ? (
+              <div className="bg-white p-10 rounded-xl border border-slate-200 text-center text-slate-500">
+                <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
+                Loading your shifts...
+              </div>
+            ) : myShifts.length === 0 ? (
               <div className="bg-white p-10 rounded-xl border border-dashed border-slate-300 text-center text-slate-500">
-                You have no shifts assigned for this week. Check the open shifts!
+                You have no shifts assigned for the next 30 days. Contact the coordinator if you think this is an error.
               </div>
             ) : (
               <div className="space-y-4">
@@ -136,6 +178,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                       <div className="flex items-center gap-4 mt-2 text-slate-600">
                         <span className="flex items-center gap-1.5 text-sm"><Calendar size={16}/> {shift.date}</span>
                         <span className="flex items-center gap-1.5 text-sm"><Clock size={16}/> {shift.startTime} - {shift.endTime}</span>
+                        {shift.location && <span className="flex items-center gap-1.5 text-sm"><MapPin size={16}/> {shift.location}</span>}
                       </div>
                     </div>
                     <div className="text-right">
@@ -147,31 +190,6 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 ))}
               </div>
             )}
-
-            {/* Opportunities Section */}
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2 mt-8">
-              <MapPin className="text-emerald-600" /> Open Opportunities (This Week)
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {openShifts.length === 0 ? (
-                 <div className="col-span-2 text-center text-slate-400 py-4 italic">
-                    No open opportunities available for the rest of this week.
-                 </div>
-              ) : (
-                openShifts.slice(0, 4).map(shift => (
-                  <div key={shift.id} className="bg-white p-5 rounded-xl border border-slate-200 hover:border-emerald-300 transition-colors cursor-pointer group">
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-semibold text-slate-900">{shift.title}</h4>
-                      <span className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded">Open</span>
-                    </div>
-                    <p className="text-sm text-slate-500 mb-3">{shift.date} • {shift.startTime}</p>
-                    <button className="w-full py-2 text-sm font-medium text-emerald-600 bg-emerald-50 rounded-lg group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                      Request to Join
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
 
           {/* Sidebar Stats & Info */}
