@@ -358,7 +358,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
             ) : myShifts.length === 0 ? (
               <div className="bg-white p-6 sm:p-10 rounded-xl border border-dashed border-slate-300 text-center text-slate-500">
-                <p className="text-sm">You have no shifts assigned for the next 30 days. Contact the coordinator if you think this is an error.</p>
+                <p className="text-sm">You have no shifts assigned for the next month. Contact the workshop manager if you think this is an error.</p>
               </div>
             ) : (
               <div className="space-y-3 sm:space-y-4">
