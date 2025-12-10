@@ -43,10 +43,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const loadMyAssignments = async () => {
     setIsLoadingAssignments(true);
     try {
+      console.log('[VolunteerDashboard] Loading assignments for volunteer:', currentUser.id);
       const assignments = await getVolunteerAssignments(currentUser.id);
+      console.log('[VolunteerDashboard] Received assignments:', assignments);
       setMyAssignments(assignments);
     } catch (error) {
-      console.error('Error loading assignments:', error);
+      console.error('[VolunteerDashboard] Error loading assignments:', error);
     } finally {
       setIsLoadingAssignments(false);
     }
@@ -182,9 +184,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   // Get my shifts by matching assignments with shift data
   const myShiftIds = new Set(myAssignments.map(a => a.shiftId));
+  console.log('[VolunteerDashboard] My shift IDs from assignments:', Array.from(myShiftIds));
+  console.log('[VolunteerDashboard] Total shifts available:', shifts.length);
+
   const myShifts = shifts
-    .filter(s => myShiftIds.has(s.id) && isShiftUpcoming(s.date))
+    .filter(s => {
+      const hasAssignment = myShiftIds.has(s.id);
+      const isUpcoming = isShiftUpcoming(s.date);
+      if (hasAssignment) {
+        console.log('[VolunteerDashboard] Shift', s.id, s.title, 'hasAssignment:', hasAssignment, 'isUpcoming:', isUpcoming, 'date:', s.date);
+      }
+      return hasAssignment && isUpcoming;
+    })
     .sort((a, b) => a.date.localeCompare(b.date));
+
+  console.log('[VolunteerDashboard] Filtered my shifts:', myShifts.length, 'shifts');
 
   // Helper function to check if volunteer can work a shift
   const canWorkShift = (shift: Shift): boolean => {

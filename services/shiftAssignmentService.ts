@@ -93,6 +93,8 @@ export const getVolunteerAssignments = async (
   volunteerId: string
 ): Promise<ShiftAssignment[]> => {
   try {
+    console.log('[getVolunteerAssignments] Fetching assignments for volunteer:', volunteerId);
+
     const { data, error } = await supabase
       .from('shift_assignments')
       .select('*')
@@ -101,13 +103,19 @@ export const getVolunteerAssignments = async (
       .order('created_at', { ascending: true });
 
     if (error) {
-      console.error('Error fetching volunteer assignments:', error);
+      console.error('[getVolunteerAssignments] Error fetching assignments:', error);
       return [];
     }
 
-    return (data || []).map(mapShiftAssignmentFromDB);
+    console.log('[getVolunteerAssignments] Raw data from DB:', data);
+    console.log('[getVolunteerAssignments] Found', data?.length || 0, 'assignments');
+
+    const mapped = (data || []).map(mapShiftAssignmentFromDB);
+    console.log('[getVolunteerAssignments] Mapped assignments:', mapped);
+
+    return mapped;
   } catch (err) {
-    console.error('Exception fetching volunteer assignments:', err);
+    console.error('[getVolunteerAssignments] Exception:', err);
     return [];
   }
 };
