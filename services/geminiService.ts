@@ -220,13 +220,46 @@ function scheduleShiftsMultiPass(
     assignmentsMade = false;
     console.log(`\n=== Pass ${passNumber} ===`);
 
+    // Re-shuffle volunteers each pass if randomization is enabled (for more variety)
+    let currentPassVolunteers = sortedVolunteers;
+    if (randomize && passNumber > 1) {
+      const novices = sortedVolunteers.filter(v => v.skillLevel === 1);
+      const intermediate = sortedVolunteers.filter(v => v.skillLevel === 2);
+      const experienced = sortedVolunteers.filter(v => v.skillLevel === 3);
+
+      currentPassVolunteers = [
+        ...shuffleArray(novices),
+        ...shuffleArray(intermediate),
+        ...shuffleArray(experienced)
+      ];
+    }
+
     // Sort shifts by how many volunteers they have (fewest first)
-    const sortedShifts = [...shifts].sort((a, b) => {
+    let sortedShifts = [...shifts].sort((a, b) => {
       const aCount = shiftAssignments.get(a.id)?.length || 0;
       const bCount = shiftAssignments.get(b.id)?.length || 0;
       if (aCount !== bCount) return aCount - bCount;
       return a.date.localeCompare(b.date); // Earlier dates first
     });
+
+    // Add randomization to shift order if enabled (shuffle shifts with same volunteer count)
+    if (randomize) {
+      // Group shifts by current assignment count, shuffle within groups
+      const shiftGroups = new Map<number, Shift[]>();
+      sortedShifts.forEach(shift => {
+        const count = shiftAssignments.get(shift.id)?.length || 0;
+        if (!shiftGroups.has(count)) {
+          shiftGroups.set(count, []);
+        }
+        shiftGroups.get(count)!.push(shift);
+      });
+
+      // Shuffle within each group and recombine
+      sortedShifts = [];
+      Array.from(shiftGroups.keys()).sort((a, b) => a - b).forEach(count => {
+        sortedShifts.push(...shuffleArray(shiftGroups.get(count)!));
+      });
+    }
 
     for (const shift of sortedShifts) {
       const currentAssignees = shiftAssignments.get(shift.id) || [];
@@ -235,7 +268,7 @@ function scheduleShiftsMultiPass(
       if (currentAssignees.length >= 5) continue;
 
       // Try to assign volunteers (in priority order: novices first, experts last)
-      for (const volunteer of sortedVolunteers) {
+      for (const volunteer of currentPassVolunteers) {
         // Skip if already assigned to this shift
         if (currentAssignees.includes(volunteer.id)) continue;
 
@@ -278,6 +311,8 @@ function scheduleShiftsMultiPass(
 
   let totalCapacity = 0;
   let totalUsed = 0;
+  const unassignedVolunteers: Volunteer[] = [];
+  const underutilizedVolunteers: Array<{volunteer: Volunteer, used: number, capacity: number}> = [];
 
   capacityUsed.forEach((used, volId) => {
     const volunteer = volunteers.find(v => v.id === volId);
@@ -288,10 +323,45 @@ function scheduleShiftsMultiPass(
     const skillLabel = volunteer?.skillLevel === 1 ? 'NOVICE' : volunteer?.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
     const percentage = capacity > 0 ? Math.round(used/capacity*100) : 0;
     console.log(`  ${volunteer?.name} (${skillLabel}): ${used}/${capacity} (${percentage}%)`);
+
+    if (used === 0 && capacity > 0 && volunteer) {
+      unassignedVolunteers.push(volunteer);
+    } else if (used < capacity && volunteer) {
+      underutilizedVolunteers.push({volunteer, used, capacity});
+    }
   });
 
   const overallUtilization = totalCapacity > 0 ? Math.round(totalUsed/totalCapacity*100) : 0;
   console.log(`\nOverall utilization: ${totalUsed}/${totalCapacity} (${overallUtilization}%)`);
+
+  // Report unassigned volunteers and why
+  if (unassignedVolunteers.length > 0) {
+    console.log(`\n⚠️  ${unassignedVolunteers.length} volunteers got ZERO assignments:`);
+    unassignedVolunteers.forEach(vol => {
+      console.log(`  - ${vol.name}:`);
+      console.log(`    Location: ${vol.preferredLocation}`);
+      console.log(`    Days: ${vol.preferredDays.join(', ')}`);
+      console.log(`    Blackout dates: ${vol.blackoutDates.length > 0 ? vol.blackoutDates.join(', ') : 'none'}`);
+      console.log(`    Only dates: ${vol.onlyDates.length > 0 ? vol.onlyDates.join(', ') : 'any'}`);
+
+      // Check how many shifts they could theoretically work
+      let matchingShifts = 0;
+      shifts.forEach(shift => {
+        if (canVolunteerWorkShift(vol, shift)) {
+          matchingShifts++;
+        }
+      });
+      console.log(`    → Can work ${matchingShifts}/${shifts.length} shifts based on preferences`);
+    });
+  }
+
+  if (underutilizedVolunteers.length > 0) {
+    console.log(`\n📊 ${underutilizedVolunteers.length} volunteers are underutilized:`);
+    underutilizedVolunteers.forEach(({volunteer, used, capacity}) => {
+      const percentage = Math.round((used / capacity) * 100);
+      console.log(`  - ${volunteer.name}: ${used}/${capacity} (${percentage}%)`);
+    });
+  }
 
   console.log('\nShift coverage:');
   let emptyShifts = 0;
@@ -367,6 +437,8 @@ export const generateMultipleScheduleOptions = async (
     utilizationPercentage: number;
     wellStaffedShifts: number;
     totalShifts: number;
+    unassignedVolunteers: number;
+    underutilizedVolunteers: number;
   };
 }>> => {
   const options = [];
@@ -410,9 +482,19 @@ export const generateMultipleScheduleOptions = async (
 
     let totalCapacity = 0;
     let totalUsed = 0;
+    let unassignedCount = 0;
+    let underutilizedCount = 0;
+
     capacityMap.forEach((capacity, volId) => {
       totalCapacity += capacity;
-      totalUsed += assignmentCounts.get(volId) || 0;
+      const used = assignmentCounts.get(volId) || 0;
+      totalUsed += used;
+
+      if (used === 0 && capacity > 0) {
+        unassignedCount++;
+      } else if (used < capacity) {
+        underutilizedCount++;
+      }
     });
 
     const shiftAssignments = new Map<string, number>();
@@ -432,7 +514,9 @@ export const generateMultipleScheduleOptions = async (
         totalAssignments: assignments.length,
         utilizationPercentage: totalCapacity > 0 ? Math.round((totalUsed / totalCapacity) * 100) : 0,
         wellStaffedShifts: wellStaffed,
-        totalShifts: targetShifts.length
+        totalShifts: targetShifts.length,
+        unassignedVolunteers: unassignedCount,
+        underutilizedVolunteers: underutilizedCount
       }
     });
   }
