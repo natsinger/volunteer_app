@@ -672,7 +672,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <p>There are currently no open shifts that match your location, day, and date preferences. You can still submit to drop this shift without selecting a replacement.</p>
                 </div>
               ) : (
-                <div className="max-h-80 sm:max-h-96 overflow-y-auto border border-slate-200 rounded-lg">
+                <div className="max-h-[50vh] overflow-y-auto border border-slate-200 rounded-lg">
                   {availableShiftsForSwitch.map((shift) => {
                     const isSelected = selectedShiftIds.includes(shift.id);
                     return (
