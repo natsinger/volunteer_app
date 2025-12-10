@@ -109,15 +109,28 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
           setIsSubmittingSwitchRequest(false);
           return;
         }
-
-        const shiftWord = selectedShiftIds.length === 1 ? 'shift' : 'shifts';
-        alert(`Successfully switched to ${selectedShiftIds.length} ${shiftWord}!`);
-      } else {
-        alert('Successfully dropped the shift!');
       }
 
+      // Log the switch in shift_switch_requests for admin tracking
+      const logMessage = selectedShiftIds.length > 0
+        ? `Switched from shift and took ${selectedShiftIds.length} replacement shift(s). Replacement shift IDs: ${selectedShiftIds.join(', ')}`
+        : 'Dropped this shift';
+
+      await createSwitchRequest(
+        switchRequestShift.id,
+        currentUser.id,
+        null,
+        `${logMessage}${switchMessage ? '. Note: ' + switchMessage : ''}`
+      );
+
+      const successMsg = selectedShiftIds.length > 0
+        ? `Successfully switched to ${selectedShiftIds.length} ${selectedShiftIds.length === 1 ? 'shift' : 'shifts'}!`
+        : 'Successfully dropped the shift!';
+
+      alert(successMsg);
       setShowSwitchModal(false);
       loadMyAssignments();
+      loadSwitchRequests();
 
     } catch (error) {
       console.error('Error switching shift:', error);

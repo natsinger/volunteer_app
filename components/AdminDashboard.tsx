@@ -12,7 +12,7 @@ import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, map
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
-import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests } from '../services/shiftAssignmentService';
+import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -129,7 +129,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const loadSwitchRequests = async () => {
     try {
-      const requests = await getPendingSwitchRequests();
+      const requests = await getAllSwitchRequests();
       setSwitchRequests(requests);
     } catch (error) {
       console.error('Error loading switch requests:', error);
