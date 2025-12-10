@@ -5,6 +5,7 @@ import VolunteerDashboard from './components/VolunteerDashboard';
 import LoginForm from './components/LoginForm';
 import VolunteerWelcome from './components/VolunteerWelcome';
 import PasswordSetup from './components/PasswordSetup';
+import ApprovalPending from './components/ApprovalPending';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB, mapVolunteerToDB, mapShiftToDB } from './lib/mappers';
@@ -92,8 +93,13 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (!user || !userRole) {
+  if (!user) {
     return <LoginForm />;
+  }
+
+  // Show approval pending page if user is logged in but has no role assigned
+  if (user && !userRole) {
+    return <ApprovalPending />;
   }
 
   // Show welcome screen for volunteers who need to complete their profile
