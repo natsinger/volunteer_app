@@ -672,7 +672,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <p>There are currently no open shifts that match your location, day, and date preferences. You can still submit to drop this shift without selecting a replacement.</p>
                 </div>
               ) : (
-                <div className="max-h-48 sm:max-h-64 overflow-y-auto border border-slate-200 rounded-lg">
+                <div className="max-h-80 sm:max-h-96 overflow-y-auto border border-slate-200 rounded-lg">
                   {availableShiftsForSwitch.map((shift) => {
                     const isSelected = selectedShiftIds.includes(shift.id);
                     return (
@@ -730,11 +730,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </button>
               <button
                 onClick={handleSubmitSwitchRequest}
-                disabled={isSubmittingSwitchRequest || selectedShiftIds.length === 0 || availableShiftsForSwitch.length === 0}
+                disabled={isSubmittingSwitchRequest}
                 className="w-full sm:flex-1 px-4 py-2.5 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
                 <Repeat size={16} />
-                {isSubmittingSwitchRequest ? 'Switching...' : `Switch to ${selectedShiftIds.length || ''} Shift${selectedShiftIds.length !== 1 ? 's' : ''}`}
+                {isSubmittingSwitchRequest ? 'Switching...' : selectedShiftIds.length > 0 ? `Switch to ${selectedShiftIds.length} Shift${selectedShiftIds.length !== 1 ? 's' : ''}` : 'Drop Shift'}
               </button>
             </div>
           </div>
