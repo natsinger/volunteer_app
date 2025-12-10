@@ -182,19 +182,28 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     return shiftDate >= today && shiftDate <= endDate;
   };
 
+  // Check if a shift is in the future (not past)
+  const isShiftFuture = (dateStr: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const shiftDate = new Date(dateStr);
+    return shiftDate >= today;
+  };
+
   // Get my shifts by matching assignments with shift data
   const myShiftIds = new Set(myAssignments.map(a => a.shiftId));
   console.log('[VolunteerDashboard] My shift IDs from assignments:', Array.from(myShiftIds));
   console.log('[VolunteerDashboard] Total shifts available:', shifts.length);
 
+  // Show ALL assigned shifts that are in the future (not just next 30 days)
   const myShifts = shifts
     .filter(s => {
       const hasAssignment = myShiftIds.has(s.id);
-      const isUpcoming = isShiftUpcoming(s.date);
+      const isFuture = isShiftFuture(s.date);
       if (hasAssignment) {
-        console.log('[VolunteerDashboard] Shift', s.id, s.title, 'hasAssignment:', hasAssignment, 'isUpcoming:', isUpcoming, 'date:', s.date);
+        console.log('[VolunteerDashboard] Shift', s.id, s.title, 'hasAssignment:', hasAssignment, 'isFuture:', isFuture, 'date:', s.date);
       }
-      return hasAssignment && isUpcoming;
+      return hasAssignment && isFuture;
     })
     .sort((a, b) => a.date.localeCompare(b.date));
 

@@ -62,13 +62,26 @@ const AppContent: React.FC = () => {
       }
 
       // Load shifts
+      console.log('[App.tsx] Loading shifts for userRole:', userRole);
       const { data: shiftsData, error: shiftsError } = await supabase
         .from('shifts')
         .select('*')
         .order('date', { ascending: true });
 
-      if (shiftsError) throw shiftsError;
-      setShifts((shiftsData || []).map(mapShiftFromDB));
+      console.log('[App.tsx] Shifts query result:', {
+        data: shiftsData,
+        error: shiftsError,
+        count: shiftsData?.length || 0
+      });
+
+      if (shiftsError) {
+        console.error('[App.tsx] Error loading shifts:', shiftsError);
+        throw shiftsError;
+      }
+
+      const mappedShifts = (shiftsData || []).map(mapShiftFromDB);
+      console.log('[App.tsx] Mapped shifts:', mappedShifts.length, 'shifts');
+      setShifts(mappedShifts);
 
       setDataLoading(false);
     } catch (error) {
