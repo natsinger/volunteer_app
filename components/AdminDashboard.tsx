@@ -649,22 +649,36 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     return (
       <div className="animate-fade-in">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
           <h2 className="text-xl font-bold text-slate-900">{monthName} Schedule</h2>
-          <div className="flex gap-4 text-sm bg-white px-4 py-2 rounded-lg border border-slate-200">
-             <div className="flex items-center gap-2">
-               <span className="w-3 h-3 rounded-full bg-orange-100 border border-orange-500"></span> Dizengoff
-             </div>
-             <div className="flex items-center gap-2">
-               <span className="w-3 h-3 rounded-full bg-blue-100 border border-blue-500"></span> Hatachana
-             </div>
-             <div className="w-px h-4 bg-slate-300 mx-2"></div>
-             <div className="flex items-center gap-2">
-               <span className="w-3 h-3 rounded-full border-2 border-red-500"></span> Understaffed (&lt;2)
-             </div>
-             <div className="flex items-center gap-2">
-               <span className="w-3 h-3 rounded-full border-2 border-emerald-500"></span> Healthy (3+)
-             </div>
+          <div className="flex flex-wrap gap-3 text-xs sm:text-sm bg-white px-4 py-3 rounded-lg border border-slate-200 shadow-sm">
+            <div className="font-semibold text-slate-600 mr-1">Locations:</div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-4 h-4 rounded bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center">H</span>
+              <span>Hatachana</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-4 h-4 rounded bg-orange-500 text-white text-[9px] font-bold flex items-center justify-center">D</span>
+              <span>Dizengoff</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-4 h-4 rounded bg-purple-500 text-white text-[9px] font-bold flex items-center justify-center">B</span>
+              <span>Both</span>
+            </div>
+            <div className="w-px h-4 bg-slate-300"></div>
+            <div className="font-semibold text-slate-600">Staffing:</div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full border-2 border-red-500"></span>
+              <span>Critical (&lt;2)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full border-2 border-amber-400"></span>
+              <span>Minimal (2)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full border-2 border-emerald-500"></span>
+              <span>Good (3+)</span>
+            </div>
           </div>
         </div>
 
@@ -686,8 +700,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="text-sm font-bold text-slate-400 mb-2">{day}</div>
                   <div className="space-y-2 flex-1">
                     {daysShifts.map(s => {
-                      const isDizengoff = s.title.toUpperCase().includes('DIZENGOFF') || s.id.toLowerCase().includes('dizengoff');
-                      
+                      // Determine location from shift properties
+                      const location = s.location || 'BOTH';
+                      const isDizengoff = location === 'DIZENGOFF';
+                      const isHatachana = location === 'HATACHANA';
+                      const isBoth = location === 'BOTH';
+
                       // Find all assignments for this shift from the AI result
                       const assignees = generatedAssignments
                         .filter(a => a.shiftId === s.id)
@@ -695,35 +713,63 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         .filter(Boolean) as Volunteer[];
 
                       const count = assignees.length;
-                      
+
                       // Status logic
                       let borderClass = 'border-red-400'; // Critical
                       if (count >= 2) borderClass = 'border-amber-400'; // Minimal
                       if (count >= 3) borderClass = 'border-emerald-500'; // Good
 
+                      // Location colors - more distinct
+                      let bgClass = 'bg-slate-50';
+                      let textClass = 'text-slate-900';
+                      let locationBadge = '';
+                      let locationBadgeClass = '';
+
+                      if (isDizengoff) {
+                        bgClass = 'bg-orange-50';
+                        textClass = 'text-orange-900';
+                        locationBadge = 'D';
+                        locationBadgeClass = 'bg-orange-500 text-white';
+                      } else if (isHatachana) {
+                        bgClass = 'bg-blue-50';
+                        textClass = 'text-blue-900';
+                        locationBadge = 'H';
+                        locationBadgeClass = 'bg-blue-500 text-white';
+                      } else if (isBoth) {
+                        bgClass = 'bg-purple-50';
+                        textClass = 'text-purple-900';
+                        locationBadge = 'B';
+                        locationBadgeClass = 'bg-purple-500 text-white';
+                      }
+
                       return (
-                        <div 
-                          key={s.id} 
+                        <div
+                          key={s.id}
                           onClick={() => setSelectedShiftForDetails(s)}
                           className={`
                             cursor-pointer group relative pl-2 pr-1 py-1.5 rounded-r border-l-4 text-xs shadow-sm hover:shadow-md transition-all
-                            ${isDizengoff ? 'bg-orange-50' : 'bg-blue-50'}
+                            ${bgClass}
                             ${borderClass}
                           `}
                         >
-                          <div className="flex justify-between items-center mb-1">
-                             <span className={`font-bold ${isDizengoff ? 'text-orange-900' : 'text-blue-900'}`}>
-                               {s.startTime.slice(0, 5)}
-                             </span>
+                          <div className="flex justify-between items-center mb-1 gap-1">
+                             <div className="flex items-center gap-1">
+                               <span className={`w-4 h-4 rounded text-[9px] font-bold flex items-center justify-center ${locationBadgeClass}`}>
+                                 {locationBadge}
+                               </span>
+                               <span className={`font-bold ${textClass}`}>
+                                 {s.startTime.slice(0, 5)}
+                               </span>
+                             </div>
                              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                               count < 2 ? 'bg-red-100 text-red-700' : 
-                               count >= 3 ? 'bg-emerald-100 text-emerald-700' : 
+                               count < 2 ? 'bg-red-100 text-red-700' :
+                               count >= 3 ? 'bg-emerald-100 text-emerald-700' :
                                'bg-amber-100 text-amber-700'
                              }`}>
                                {count}/5
                              </span>
                           </div>
-                          
+
                           <div className="space-y-0.5">
                             {assignees.slice(0, 2).map(v => (
                               <div key={v.id} className="truncate opacity-80 text-[10px] flex items-center gap-1">
