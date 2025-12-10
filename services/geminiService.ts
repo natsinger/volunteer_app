@@ -6,6 +6,18 @@ const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
 const ai = new GoogleGenAI({ apiKey });
 
+/**
+ * Fisher-Yates shuffle algorithm for randomizing arrays
+ */
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 // Helper to determine monthly capacity based on frequency string
 export const getMonthlyCapacity = (frequency: string): number => {
   if (!frequency) return 0;
@@ -118,13 +130,15 @@ function enforceCapacityLimits(
 }
 
 /**
- * Deterministic scheduling algorithm that fills ALL shifts
+ * Scheduling algorithm that fills ALL shifts
  * Prioritizes novices first, saves experts for last
  * Does multiple passes until all shifts are filled or no capacity remains
+ * @param randomize - If true, adds randomization to volunteer ordering within skill level groups
  */
 function scheduleShiftsMultiPass(
   volunteers: Volunteer[],
-  shifts: Shift[]
+  shifts: Shift[],
+  randomize: boolean = false
 ): Array<{shiftId: string, volunteerId: string, reasoning: string}> {
 
   const assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}> = [];
@@ -138,15 +152,33 @@ function scheduleShiftsMultiPass(
   shifts.forEach(s => shiftAssignments.set(s.id, []));
 
   // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
-  // Within same skill level, sort by capacity (higher capacity first)
-  const sortedVolunteers = [...volunteers].sort((a, b) => {
-    if (a.skillLevel !== b.skillLevel) {
-      return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
-    }
-    return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
-  });
+  // Within same skill level, sort by capacity (higher capacity first) or randomize
+  let sortedVolunteers: Volunteer[];
 
-  console.log('Volunteer priority order (novices first):');
+  if (randomize) {
+    // Group by skill level, shuffle within each group, then combine
+    const novices = volunteers.filter(v => v.skillLevel === 1);
+    const intermediate = volunteers.filter(v => v.skillLevel === 2);
+    const experienced = volunteers.filter(v => v.skillLevel === 3);
+
+    sortedVolunteers = [
+      ...shuffleArray(novices),
+      ...shuffleArray(intermediate),
+      ...shuffleArray(experienced)
+    ];
+
+    console.log('Volunteer priority order (RANDOMIZED within skill levels):');
+  } else {
+    sortedVolunteers = [...volunteers].sort((a, b) => {
+      if (a.skillLevel !== b.skillLevel) {
+        return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
+      }
+      return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
+    });
+
+    console.log('Volunteer priority order (novices first):');
+  }
+
   sortedVolunteers.forEach((v, i) => {
     const skillLabel = v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
     console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${getMonthlyCapacity(v.frequency)})`);
@@ -279,7 +311,8 @@ export const generateScheduleAI = async (
   volunteers: Volunteer[],
   shifts: Shift[],
   targetMonth: number, // 1-12
-  targetYear: number
+  targetYear: number,
+  randomize: boolean = false
 ) => {
   if (!apiKey) {
     throw new Error("API Key is missing. Please check your environment configuration.");
@@ -304,16 +337,108 @@ export const generateScheduleAI = async (
     throw new Error(`No open shifts found for ${targetMonth}/${targetYear}. Please check your shift calendar.`);
   }
 
-  console.log(`\n🔄 Starting deterministic scheduling:`);
+  console.log(`\n🔄 Starting ${randomize ? 'RANDOMIZED' : 'deterministic'} scheduling:`);
   console.log(`  Volunteers: ${activeVolunteers.length} active`);
   console.log(`  Shifts: ${targetShifts.length} open shifts`);
 
-  // Use deterministic multi-pass algorithm instead of AI
-  const validAssignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts);
+  // Use multi-pass algorithm with optional randomization
+  const validAssignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts, randomize);
 
   console.log(`\n✅ Scheduling complete: ${validAssignments.length} assignments created`);
 
   return validAssignments;
+};
+
+/**
+ * Generate multiple schedule solutions with different randomized volunteer orderings
+ * This allows admins to choose from several valid options to ensure variety month-to-month
+ */
+export const generateMultipleScheduleOptions = async (
+  volunteers: Volunteer[],
+  shifts: Shift[],
+  targetMonth: number,
+  targetYear: number,
+  numberOfOptions: number = 3
+): Promise<Array<{
+  id: number;
+  assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}>;
+  statistics: {
+    totalAssignments: number;
+    utilizationPercentage: number;
+    wellStaffedShifts: number;
+    totalShifts: number;
+  };
+}>> => {
+  const options = [];
+
+  // Filter only active volunteers
+  const activeVolunteers = volunteers.filter(v => v.availabilityStatus === 'Active');
+
+  // Filter open shifts for the target month
+  const targetShifts = shifts.filter(s => {
+    const d = new Date(s.date);
+    return s.status === 'Open' &&
+           d.getMonth() + 1 === targetMonth &&
+           d.getFullYear() === targetYear;
+  });
+
+  if (activeVolunteers.length === 0) {
+    throw new Error("No active volunteers found.");
+  }
+
+  if (targetShifts.length === 0) {
+    throw new Error(`No open shifts found for ${targetMonth}/${targetYear}.`);
+  }
+
+  console.log(`\n🎲 Generating ${numberOfOptions} different schedule options...`);
+
+  for (let i = 0; i < numberOfOptions; i++) {
+    console.log(`\n--- Option ${i + 1} ---`);
+    // Use randomization for all options to get different results
+    const assignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts, true);
+
+    // Calculate statistics
+    const capacityMap = new Map<string, number>();
+    activeVolunteers.forEach(v => {
+      capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
+    });
+
+    const assignmentCounts = new Map<string, number>();
+    assignments.forEach(a => {
+      assignmentCounts.set(a.volunteerId, (assignmentCounts.get(a.volunteerId) || 0) + 1);
+    });
+
+    let totalCapacity = 0;
+    let totalUsed = 0;
+    capacityMap.forEach((capacity, volId) => {
+      totalCapacity += capacity;
+      totalUsed += assignmentCounts.get(volId) || 0;
+    });
+
+    const shiftAssignments = new Map<string, number>();
+    assignments.forEach(a => {
+      shiftAssignments.set(a.shiftId, (shiftAssignments.get(a.shiftId) || 0) + 1);
+    });
+
+    let wellStaffed = 0;
+    shiftAssignments.forEach(count => {
+      if (count >= 3) wellStaffed++;
+    });
+
+    options.push({
+      id: i + 1,
+      assignments,
+      statistics: {
+        totalAssignments: assignments.length,
+        utilizationPercentage: totalCapacity > 0 ? Math.round((totalUsed / totalCapacity) * 100) : 0,
+        wellStaffedShifts: wellStaffed,
+        totalShifts: targetShifts.length
+      }
+    });
+  }
+
+  console.log(`\n✅ Generated ${numberOfOptions} schedule options`);
+  return options;
 };
 
 export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunteer>[]> => {
