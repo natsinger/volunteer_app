@@ -339,7 +339,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             <div className="flex items-center justify-between">
               <h2 className="text-base sm:text-xl font-bold text-slate-900 flex items-center gap-2">
                 <Calendar className="text-indigo-600 flex-shrink-0" size={20} />
-                <span className="line-clamp-1">My Upcoming Shifts (30 Days)</span>
+                <span className="line-clamp-1">My Upcoming Shifts </span>
               </h2>
               <button
                 onClick={loadMyAssignments}
