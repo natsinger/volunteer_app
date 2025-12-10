@@ -12,7 +12,8 @@ interface VolunteerDashboardProps {
 const DAYS = [
   { id: '0', label: 'Sunday' },
   { id: '1', label: 'Monday' },
-  { id: '2', label: 'Tuesday' },
+  { id: '2_morning', label: 'Tuesday Morning' },
+  { id: '2_evening', label: 'Tuesday Evening' },
   { id: '3', label: 'Wednesday' },
   { id: '4', label: 'Thursday' },
   { id: '5', label: 'Friday' },
@@ -83,16 +84,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const handleSubmitSwitchRequest = async () => {
     if (!switchRequestShift) return;
 
-    // Validate at least one shift is selected
-    if (selectedShiftIds.length === 0) {
-      alert('Please select at least one shift to switch to.');
-      return;
-    }
-
     setIsSubmittingSwitchRequest(true);
     try {
-      // Direct switch: remove from current shift, add to selected shifts
-      // Remove from current shift first
+      // Remove from current shift
       const removeResult = await removeVolunteerFromShift(switchRequestShift.id, currentUser.id);
       if (!removeResult.success) {
         alert(`Failed to remove from current shift: ${removeResult.error}`);
@@ -100,23 +94,28 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         return;
       }
 
-      // Add to all selected shifts
-      const addResults = await Promise.all(
-        selectedShiftIds.map(shiftId => addVolunteerToShift(shiftId, currentUser.id))
-      );
+      // Add to selected shifts (if any)
+      if (selectedShiftIds.length > 0) {
+        const addResults = await Promise.all(
+          selectedShiftIds.map(shiftId => addVolunteerToShift(shiftId, currentUser.id))
+        );
 
-      // Check if any additions failed
-      const failedAdds = addResults.filter(result => !result.success);
-      if (failedAdds.length > 0) {
-        // Rollback: add back to original shift
-        await addVolunteerToShift(switchRequestShift.id, currentUser.id);
-        alert(`Failed to assign to ${failedAdds.length} shift(s). Switch cancelled.`);
-        setIsSubmittingSwitchRequest(false);
-        return;
+        // Check if any additions failed
+        const failedAdds = addResults.filter(result => !result.success);
+        if (failedAdds.length > 0) {
+          // Rollback: add back to original shift
+          await addVolunteerToShift(switchRequestShift.id, currentUser.id);
+          alert(`Failed to assign to ${failedAdds.length} shift(s). Switch cancelled.`);
+          setIsSubmittingSwitchRequest(false);
+          return;
+        }
+
+        const shiftWord = selectedShiftIds.length === 1 ? 'shift' : 'shifts';
+        alert(`Successfully switched to ${selectedShiftIds.length} ${shiftWord}!`);
+      } else {
+        alert('Successfully dropped the shift!');
       }
 
-      const shiftWord = selectedShiftIds.length === 1 ? 'shift' : 'shifts';
-      alert(`Successfully switched to ${selectedShiftIds.length} ${shiftWord}!`);
       setShowSwitchModal(false);
       loadMyAssignments();
 
@@ -265,13 +264,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   const toggleDay = (dayId: string) => {
     const current = editForm.preferredDays || [];
-    // Simple logic: If any version of the day (e.g., "2" or "2_evening") exists, remove it.
-    // If not, add just the simple dayId.
-    const exists = current.some(d => d.startsWith(dayId));
-    
+    // Toggle the specific day ID (e.g., "2_morning" or "2_evening" independently)
+    const exists = current.includes(dayId);
+
     let updated;
     if (exists) {
-      updated = current.filter(d => !d.startsWith(dayId));
+      updated = current.filter(d => d !== dayId);
     } else {
       updated = [...current, dayId];
     }
@@ -297,7 +295,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   const isDaySelected = (dayId: string) => {
-    return editForm.preferredDays?.some(d => d.startsWith(dayId));
+    return editForm.preferredDays?.includes(dayId);
   };
 
   return (
@@ -643,7 +641,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             <div className="mb-4 sm:mb-6">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium text-slate-700">
-                  Select shifts to switch to <span className="text-red-500">*</span>
+                  Select replacement shifts (optional)
                 </label>
                 {selectedShiftIds.length > 0 && (
                   <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
@@ -652,13 +650,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 )}
               </div>
               <p className="text-xs text-slate-500 mb-3">
-                Select one or more shifts that match your preferences. You can choose multiple shifts.
+                You can select one or more replacement shifts, or submit without selecting any to simply drop this shift.
               </p>
 
               {availableShiftsForSwitch.length === 0 ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-4 text-xs sm:text-sm text-amber-900">
-                  <p className="font-medium mb-1">No available shifts found</p>
-                  <p>There are currently no open shifts that match your location, day, and date preferences. Please contact the coordinator if you need to drop this shift.</p>
+                  <p className="font-medium mb-1">No replacement shifts available</p>
+                  <p>There are currently no open shifts that match your location, day, and date preferences. You can still submit to drop this shift without selecting a replacement.</p>
                 </div>
               ) : (
                 <div className="max-h-48 sm:max-h-64 overflow-y-auto border border-slate-200 rounded-lg">
