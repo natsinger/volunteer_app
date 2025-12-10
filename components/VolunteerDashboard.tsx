@@ -86,39 +86,55 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
     setIsSubmittingSwitchRequest(true);
     try {
-      // Create a switch request (admin will need to approve)
-      const message = selectedShiftIds.length > 0
-        ? `Request to switch from shift and take ${selectedShiftIds.length} replacement shift(s)`
-        : 'Request to drop this shift';
-
-      const result = await createSwitchRequest(
-        switchRequestShift.id,
-        currentUser.id,
-        null, // No target volunteer (just dropping/switching)
-        `${message}${switchMessage ? ': ' + switchMessage : ''}`
-      );
-
-      if (!result.success) {
-        alert(`Failed to create switch request: ${result.error}`);
+      // Remove from current shift
+      const removeResult = await removeVolunteerFromShift(switchRequestShift.id, currentUser.id);
+      if (!removeResult.success) {
+        alert(`Failed to remove from current shift: ${removeResult.error}`);
         setIsSubmittingSwitchRequest(false);
         return;
       }
 
-      // Store selected replacement shift IDs in the request message for admin reference
+      // Add to selected shifts (if any)
       if (selectedShiftIds.length > 0) {
-        // Note: In a production system, you might want to store this in a separate table
-        // For now, we'll include it in the message
-        console.log('Replacement shift IDs:', selectedShiftIds);
+        const addResults = await Promise.all(
+          selectedShiftIds.map(shiftId => addVolunteerToShift(shiftId, currentUser.id))
+        );
+
+        // Check if any additions failed
+        const failedAdds = addResults.filter(result => !result.success);
+        if (failedAdds.length > 0) {
+          // Rollback: add back to original shift
+          await addVolunteerToShift(switchRequestShift.id, currentUser.id);
+          alert(`Failed to assign to ${failedAdds.length} shift(s). Switch cancelled.`);
+          setIsSubmittingSwitchRequest(false);
+          return;
+        }
       }
 
-      alert('Switch request submitted! An admin will review your request.');
+      // Log the switch in shift_switch_requests for admin tracking
+      const logMessage = selectedShiftIds.length > 0
+        ? `Switched from shift and took ${selectedShiftIds.length} replacement shift(s). Replacement shift IDs: ${selectedShiftIds.join(', ')}`
+        : 'Dropped this shift';
+
+      await createSwitchRequest(
+        switchRequestShift.id,
+        currentUser.id,
+        null,
+        `${logMessage}${switchMessage ? '. Note: ' + switchMessage : ''}`
+      );
+
+      const successMsg = selectedShiftIds.length > 0
+        ? `Successfully switched to ${selectedShiftIds.length} ${selectedShiftIds.length === 1 ? 'shift' : 'shifts'}!`
+        : 'Successfully dropped the shift!';
+
+      alert(successMsg);
       setShowSwitchModal(false);
       loadMyAssignments();
       loadSwitchRequests();
 
     } catch (error) {
-      console.error('Error creating switch request:', error);
-      alert('An error occurred while creating your switch request');
+      console.error('Error switching shift:', error);
+      alert('An error occurred while switching your shift');
     } finally {
       setIsSubmittingSwitchRequest(false);
     }

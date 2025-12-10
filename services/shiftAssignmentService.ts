@@ -283,6 +283,30 @@ export const getPendingSwitchRequests = async (): Promise<ShiftSwitchRequest[]> 
 };
 
 /**
+ * Get all switch requests (for admin history/tracking)
+ * Returns all requests regardless of status
+ */
+export const getAllSwitchRequests = async (): Promise<ShiftSwitchRequest[]> => {
+  try {
+    const { data, error } = await supabase
+      .from('shift_switch_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100); // Limit to last 100 requests
+
+    if (error) {
+      console.error('Error fetching all switch requests:', error);
+      return [];
+    }
+
+    return (data || []).map(mapShiftSwitchRequestFromDB);
+  } catch (err) {
+    console.error('Exception fetching all switch requests:', err);
+    return [];
+  }
+};
+
+/**
  * Get switch requests for a specific volunteer
  * Automatically cleans up expired requests before returning
  */
