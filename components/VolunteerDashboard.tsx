@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Send } from 'lucide-react';
+import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest } from '../types';
-import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest } from '../services/shiftAssignmentService';
+import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift } from '../services/shiftAssignmentService';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -30,7 +30,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
   const [showSwitchModal, setShowSwitchModal] = useState(false);
   const [switchRequestShift, setSwitchRequestShift] = useState<Shift | null>(null);
-  const [switchOfferShiftId, setSwitchOfferShiftId] = useState<string>('');
+  const [switchToShiftId, setSwitchToShiftId] = useState<string>('');
   const [switchMessage, setSwitchMessage] = useState('');
   const [isSubmittingSwitchRequest, setIsSubmittingSwitchRequest] = useState(false);
 
@@ -63,7 +63,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   const handleOpenSwitchModal = (shift: Shift) => {
     setSwitchRequestShift(shift);
-    setSwitchOfferShiftId('');
+    setSwitchToShiftId('');
     setSwitchMessage('');
     setShowSwitchModal(true);
   };
@@ -71,33 +71,40 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const handleSubmitSwitchRequest = async () => {
     if (!switchRequestShift) return;
 
+    // If switching to a specific shift, validate it's selected
+    if (!switchToShiftId) {
+      alert('Please select a shift to switch to, or cancel to drop the shift without a replacement.');
+      return;
+    }
+
     setIsSubmittingSwitchRequest(true);
     try {
-      // If an offer shift is selected, find the volunteer assigned to it
-      let targetVolunteerId = null;
-      if (switchOfferShiftId) {
-        const targetAssignment = myAssignments.find(a => a.shiftId === switchOfferShiftId);
-        // For switch offers, we don't specify a target - it's an open offer
-        // The targetVolunteerId will be null, meaning any volunteer can take it
+      // Direct switch: remove from current shift, add to new shift
+      // Remove from current shift
+      const removeResult = await removeVolunteerFromShift(switchRequestShift.id, currentUser.id);
+      if (!removeResult.success) {
+        alert(`Failed to remove from current shift: ${removeResult.error}`);
+        setIsSubmittingSwitchRequest(false);
+        return;
       }
 
-      const result = await createSwitchRequest(
-        switchRequestShift.id,
-        currentUser.id,
-        targetVolunteerId,
-        switchMessage || null
-      );
-
-      if (result.success) {
-        alert('Switch request submitted successfully! Other volunteers can now see and accept your request.');
-        setShowSwitchModal(false);
-        loadSwitchRequests();
-      } else {
-        alert(`Failed to submit switch request: ${result.error}`);
+      // Add to new shift
+      const addResult = await addVolunteerToShift(switchToShiftId, currentUser.id);
+      if (!addResult.success) {
+        // Rollback: add back to original shift
+        await addVolunteerToShift(switchRequestShift.id, currentUser.id);
+        alert(`Failed to assign to new shift: ${addResult.error}`);
+        setIsSubmittingSwitchRequest(false);
+        return;
       }
+
+      alert('Shift switched successfully!');
+      setShowSwitchModal(false);
+      loadMyAssignments();
+
     } catch (error) {
-      console.error('Error submitting switch request:', error);
-      alert('An error occurred while submitting your request');
+      console.error('Error switching shift:', error);
+      alert('An error occurred while switching your shift');
     } finally {
       setIsSubmittingSwitchRequest(false);
     }
@@ -163,11 +170,54 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     .filter(s => myShiftIds.has(s.id) && isShiftUpcoming(s.date))
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  // Helper function to check if volunteer can work a shift
+  const canWorkShift = (shift: Shift): boolean => {
+    // Check location compatibility
+    if (currentUser.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
+      if (currentUser.preferredLocation !== shift.location) return false;
+    }
+
+    // Check day preference
+    const date = new Date(shift.date);
+    const dayOfWeek = date.getDay(); // 0 = Sunday
+    const hour = parseInt(shift.startTime.split(':')[0], 10);
+
+    // Check for Tuesday morning/evening split
+    let dayCode: string;
+    if (dayOfWeek === 2) {
+      dayCode = hour < 16 ? '2_morning' : '2_evening';
+    } else {
+      dayCode = dayOfWeek.toString();
+    }
+
+    if (!currentUser.preferredDays.includes(dayCode)) return false;
+
+    // Check blackout dates
+    if (currentUser.blackoutDates.includes(shift.date)) return false;
+
+    // Check only dates - if specified, volunteer can ONLY work these specific dates
+    if (currentUser.onlyDates.length > 0 && !currentUser.onlyDates.includes(shift.date)) {
+      return false;
+    }
+
+    return true;
+  };
+
   // Show open shifts that the volunteer could potentially work
   const openShifts = shifts
     .filter(s => s.status === 'Open' && isShiftUpcoming(s.date) && !myShiftIds.has(s.id))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 5); // Limit to 5 open shifts
+
+  // Get available shifts for switching (open shifts the volunteer can work)
+  const availableShiftsForSwitch = shifts
+    .filter(s =>
+      s.status === 'Open' &&
+      isShiftUpcoming(s.date) &&
+      !myShiftIds.has(s.id) &&
+      canWorkShift(s)
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   const handleSave = () => {
     updateVolunteer(editForm);
@@ -307,10 +357,10 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                                 : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                             }`}
-                            title={existingRequest ? 'Switch request already pending' : 'Request to switch this shift'}
+                            title={existingRequest ? 'Switch request already pending' : 'Switch to a different shift'}
                           >
                             <Repeat size={14} />
-                            {existingRequest ? 'Pending' : 'Request Switch'}
+                            {existingRequest ? 'Pending' : 'Switch Shift'}
                           </button>
                         </div>
                       </div>
@@ -535,7 +585,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
             <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
               <Repeat className="text-emerald-600" />
-              Request Shift Switch
+              Switch to a Different Shift
             </h2>
 
             {/* Shift Details */}
@@ -549,52 +599,64 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
             </div>
 
-            {/* Offer One of Your Other Shifts (Optional) */}
+            {/* Select Shift to Switch To */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Offer one of your other shifts (Optional)
+                Select a shift to switch to <span className="text-red-500">*</span>
               </label>
               <p className="text-xs text-slate-500 mb-3">
-                Select another shift you're assigned to offer in exchange. This can help find someone to switch with. Leave empty for an open request.
+                Choose from available open shifts that match your preferences and availability.
               </p>
-              <select
-                value={switchOfferShiftId}
-                onChange={(e) => setSwitchOfferShiftId(e.target.value)}
-                className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-              >
-                <option value="">No offer (Open request)</option>
-                {myShifts
-                  .filter(s => s.id !== switchRequestShift.id)
-                  .map(shift => (
-                    <option key={shift.id} value={shift.id}>
-                      {shift.title} - {shift.date} at {shift.startTime}
-                    </option>
-                  ))}
-              </select>
-            </div>
 
-            {/* Message */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Message (Optional)
-              </label>
-              <p className="text-xs text-slate-500 mb-2">
-                Explain why you need to switch or provide additional context
-              </p>
-              <textarea
-                value={switchMessage}
-                onChange={(e) => setSwitchMessage(e.target.value)}
-                className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
-                rows={3}
-                placeholder="e.g., I have a family event that day..."
-              />
+              {availableShiftsForSwitch.length === 0 ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+                  <p className="font-medium mb-1">No available shifts found</p>
+                  <p>There are currently no open shifts that match your location, day, and date preferences. Please contact the coordinator if you need to drop this shift.</p>
+                </div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-lg">
+                  {availableShiftsForSwitch.map((shift) => (
+                    <button
+                      key={shift.id}
+                      type="button"
+                      onClick={() => setSwitchToShiftId(shift.id)}
+                      className={`w-full text-left p-4 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors ${
+                        switchToShiftId === shift.id
+                          ? 'bg-emerald-50 border-l-4 border-l-emerald-500'
+                          : 'border-l-4 border-l-transparent'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-slate-900">{shift.title}</h4>
+                          <div className="flex items-center gap-3 mt-1 text-sm text-slate-600">
+                            <span className="flex items-center gap-1">
+                              <Calendar size={14}/> {shift.date}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock size={14}/> {shift.startTime} - {shift.endTime}
+                            </span>
+                            {shift.location && (
+                              <span className="flex items-center gap-1">
+                                <MapPin size={14}/> {shift.location}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {switchToShiftId === shift.id && (
+                          <Check size={20} className="text-emerald-600 flex-shrink-0 ml-2" />
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Info Note */}
             <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-100">
               <p className="text-sm text-blue-900">
-                <strong>How it works:</strong> Your switch request will be visible to other volunteers. They can accept it and take your shift.
-                {switchOfferShiftId && ' If you offered another shift, they will receive that shift in exchange.'}
+                <strong>How it works:</strong> You will be immediately removed from your current shift and assigned to the new shift you select. This change takes effect right away.
               </p>
             </div>
 
@@ -608,11 +670,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </button>
               <button
                 onClick={handleSubmitSwitchRequest}
-                disabled={isSubmittingSwitchRequest}
+                disabled={isSubmittingSwitchRequest || !switchToShiftId || availableShiftsForSwitch.length === 0}
                 className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Send size={16} />
-                {isSubmittingSwitchRequest ? 'Submitting...' : 'Submit Request'}
+                <Repeat size={16} />
+                {isSubmittingSwitchRequest ? 'Switching...' : 'Confirm Switch'}
               </button>
             </div>
           </div>
