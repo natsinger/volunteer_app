@@ -4,7 +4,7 @@ import {
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest } from '../types';
-import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift } from '../services/geminiService';
+import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import { supabase } from '../lib/supabase';
@@ -139,11 +139,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleGenerateSchedule = async () => {
     setIsGenerating(true);
     try {
-      const result = await generateScheduleAI(volunteers, shifts, targetMonth, targetYear);
-      
-      if (result && result.length > 0) {
-        setGeneratedAssignments(result);
-        setScheduleResultView('calendar');
+      // Generate 3 different schedule options
+      const options = await generateMultipleScheduleOptions(volunteers, shifts, targetMonth, targetYear, 3);
+
+      if (options && options.length > 0) {
+        setScheduleOptions(options);
+        setShowOptionsModal(true);
       } else {
         alert(`No assignments could be generated for ${targetMonth}/${targetYear}.`);
       }
@@ -155,10 +156,39 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleSelectScheduleOption = (optionId: number) => {
+    const selectedOption = scheduleOptions.find(opt => opt.id === optionId);
+    if (selectedOption) {
+      // Remove the reasoning field to match the expected type
+      const assignments = selectedOption.assignments.map(({ shiftId, volunteerId }) => ({
+        shiftId,
+        volunteerId
+      }));
+      setGeneratedAssignments(assignments);
+      setSelectedOptionId(optionId);
+      setShowOptionsModal(false);
+      setScheduleResultView('calendar');
+    }
+  };
+
   // We need a place to store the assignments since the Shift type is 1-to-1
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
   const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
   const [assignmentsApplied, setAssignmentsApplied] = useState(false);
+
+  // Multiple schedule options state
+  const [scheduleOptions, setScheduleOptions] = useState<Array<{
+    id: number;
+    assignments: Array<{shiftId: string, volunteerId: string, reasoning: string}>;
+    statistics: {
+      totalAssignments: number;
+      utilizationPercentage: number;
+      wellStaffedShifts: number;
+      totalShifts: number;
+    };
+  }>>([]);
+  const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
 
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
@@ -1782,6 +1812,110 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 className="px-4 py-2 bg-slate-600 text-white rounded-lg font-medium hover:bg-slate-700"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Options Selection Modal */}
+      {showOptionsModal && scheduleOptions.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowOptionsModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles size={28} className="text-emerald-600" /> Choose Your Schedule
+              </h2>
+              <p className="text-sm text-slate-500 mt-2">
+                We've generated {scheduleOptions.length} different schedule options. Each one is randomized within skill levels to ensure variety.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {scheduleOptions.map((option) => (
+                <div
+                  key={option.id}
+                  className={`border-2 rounded-lg p-5 transition-all cursor-pointer hover:shadow-lg ${
+                    selectedOptionId === option.id
+                      ? 'border-emerald-500 bg-emerald-50'
+                      : 'border-slate-200 hover:border-emerald-300'
+                  }`}
+                  onClick={() => setSelectedOptionId(option.id)}
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        Option {option.id}
+                        {selectedOptionId === option.id && (
+                          <CheckCircle size={20} className="text-emerald-600" />
+                        )}
+                      </h3>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white rounded-lg p-3 border border-slate-200">
+                      <div className="text-2xl font-bold text-slate-900">
+                        {option.statistics.totalAssignments}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Total Assignments</div>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-3 border border-slate-200">
+                      <div className="text-2xl font-bold text-emerald-600">
+                        {option.statistics.utilizationPercentage}%
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Volunteer Utilization</div>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-3 border border-slate-200">
+                      <div className="text-2xl font-bold text-indigo-600">
+                        {option.statistics.wellStaffedShifts}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Well-Staffed Shifts (3+)</div>
+                    </div>
+
+                    <div className="bg-white rounded-lg p-3 border border-slate-200">
+                      <div className="text-2xl font-bold text-slate-600">
+                        {option.statistics.totalShifts}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Total Shifts</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-between mt-6 pt-4 border-t border-slate-200">
+              <button
+                onClick={() => setShowOptionsModal(false)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedOptionId) {
+                    handleSelectScheduleOption(selectedOptionId);
+                  } else {
+                    alert('Please select a schedule option');
+                  }
+                }}
+                disabled={!selectedOptionId}
+                className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${
+                  selectedOptionId
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Use This Schedule
               </button>
             </div>
           </div>
