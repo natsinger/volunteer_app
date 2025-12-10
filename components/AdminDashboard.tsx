@@ -185,6 +185,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       utilizationPercentage: number;
       wellStaffedShifts: number;
       totalShifts: number;
+      unassignedVolunteers: number;
+      underutilizedVolunteers: number;
     };
   }>>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
@@ -1860,7 +1862,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div className="bg-white rounded-lg p-3 border border-slate-200">
                       <div className="text-2xl font-bold text-slate-900">
                         {option.statistics.totalAssignments}
@@ -1887,6 +1889,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         {option.statistics.totalShifts}
                       </div>
                       <div className="text-xs text-slate-500 mt-1">Total Shifts</div>
+                    </div>
+
+                    <div className={`bg-white rounded-lg p-3 border ${option.statistics.unassignedVolunteers > 0 ? 'border-red-300' : 'border-slate-200'}`}>
+                      <div className={`text-2xl font-bold ${option.statistics.unassignedVolunteers > 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                        {option.statistics.unassignedVolunteers}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Unassigned Volunteers</div>
+                    </div>
+
+                    <div className={`bg-white rounded-lg p-3 border ${option.statistics.underutilizedVolunteers > 0 ? 'border-amber-300' : 'border-slate-200'}`}>
+                      <div className={`text-2xl font-bold ${option.statistics.underutilizedVolunteers > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {option.statistics.underutilizedVolunteers}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Underutilized</div>
                     </div>
                   </div>
                 </div>
