@@ -359,7 +359,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-3 sm:p-6 md:p-12 relative">
+    <div className="min-h-screen bg-slate-50 p-3 sm:p-6 md:p-12 pb-20 relative">
       <div className="max-w-5xl mx-auto">
 
         {/* Profile Header */}

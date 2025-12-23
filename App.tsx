@@ -150,7 +150,7 @@ const AppContent: React.FC = () => {
       </nav>
 
       {/* Main Role Content */}
-      <div className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-y-auto relative">
         {userRole === 'admin' && (
           <AdminDashboard
             volunteers={volunteers}
