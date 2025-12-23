@@ -1486,30 +1486,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                            isAlreadyAssigned: assignedVolunteerIds.has(vol.id),
                          };
                        })
-                       .filter(v => !v.isAlreadyAssigned)
-                       .sort((a, b) => a.utilization - b.utilization); // Sort by utilization (lowest first)
+                       .sort((a, b) => {
+                         // Sort: unassigned first, then by utilization
+                         if (a.isAlreadyAssigned && !b.isAlreadyAssigned) return 1;
+                         if (!a.isAlreadyAssigned && b.isAlreadyAssigned) return -1;
+                         return a.utilization - b.utilization;
+                       });
 
                      return availableVolunteers.length > 0 ? (
                        availableVolunteers.map(vol => (
-                         <div key={vol.id} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
-                           <div className="flex items-center gap-2">
-                             <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-bold text-xs">
+                         <div key={vol.id} className={`flex items-center justify-between p-2 rounded-lg border transition-colors ${
+                           vol.isAlreadyAssigned
+                             ? 'bg-indigo-50 border-indigo-200'
+                             : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                         }`}>
+                           <div className="flex items-center gap-2 flex-1">
+                             <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
+                               vol.isAlreadyAssigned
+                                 ? 'bg-indigo-200 text-indigo-700'
+                                 : 'bg-slate-200 text-slate-700'
+                             }`}>
                                {vol.name.charAt(0)}
                              </div>
-                             <div>
-                               <div className="font-medium text-slate-900 text-sm">{vol.name}</div>
+                             <div className="flex-1">
+                               <div className="flex items-center gap-2">
+                                 <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
+                                 {vol.isAlreadyAssigned && (
+                                   <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium">
+                                     Already Assigned
+                                   </span>
+                                 )}
+                               </div>
                                <div className="text-xs text-slate-500">
                                  {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
                                </div>
                              </div>
                            </div>
-                           <button
-                             onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
-                             className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
-                             title="Add to shift"
-                           >
-                             <UserPlus size={16} />
-                           </button>
+                           {!vol.isAlreadyAssigned && (
+                             <button
+                               onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
+                               className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
+                               title="Add to shift"
+                             >
+                               <UserPlus size={16} />
+                             </button>
+                           )}
                          </div>
                        ))
                      ) : (
