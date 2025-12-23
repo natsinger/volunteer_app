@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat } from 'lucide-react';
+import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest } from '../types';
-import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift } from '../services/shiftAssignmentService';
+import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
+import { supabase } from '../lib/supabase';
+import { mapVolunteerFromDB } from '../lib/mappers';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -35,6 +37,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [switchMessage, setSwitchMessage] = useState('');
   const [isSubmittingSwitchRequest, setIsSubmittingSwitchRequest] = useState(false);
 
+  // Coworkers viewing state
+  const [showCoworkersModal, setShowCoworkersModal] = useState(false);
+  const [coworkersShift, setCoworkersShift] = useState<Shift | null>(null);
+  const [coworkers, setCoworkers] = useState<Volunteer[]>([]);
+  const [isLoadingCoworkers, setIsLoadingCoworkers] = useState(false);
+  const [selectedVolunteerProfile, setSelectedVolunteerProfile] = useState<Volunteer | null>(null);
+
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
     loadMyAssignments();
@@ -61,6 +70,44 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       setSwitchRequests(requests);
     } catch (error) {
       console.error('Error loading switch requests:', error);
+    }
+  };
+
+  const loadCoworkers = async (shift: Shift) => {
+    setIsLoadingCoworkers(true);
+    setCoworkersShift(shift);
+    setShowCoworkersModal(true);
+    try {
+      // Get all assignments for this shift
+      const assignments = await getShiftAssignments([shift.id]);
+
+      // Extract volunteer IDs
+      const volunteerIds = assignments.map(a => a.volunteerId);
+
+      if (volunteerIds.length === 0) {
+        setCoworkers([]);
+        return;
+      }
+
+      // Fetch volunteer details from database
+      const { data, error } = await supabase
+        .from('volunteers')
+        .select('*')
+        .in('id', volunteerIds);
+
+      if (error) {
+        console.error('Error loading coworkers:', error);
+        setCoworkers([]);
+        return;
+      }
+
+      const volunteers = (data || []).map(mapVolunteerFromDB);
+      setCoworkers(volunteers);
+    } catch (error) {
+      console.error('Error loading coworkers:', error);
+      setCoworkers([]);
+    } finally {
+      setIsLoadingCoworkers(false);
     }
   };
 
@@ -400,19 +447,29 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                               CONFIRMED
                             </span>
                           )}
-                          <button
-                            onClick={() => handleOpenSwitchModal(shift)}
-                            disabled={!!existingRequest}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm rounded-lg transition-colors whitespace-nowrap ${
-                              existingRequest
-                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                            }`}
-                            title={existingRequest ? 'Switch request already pending' : 'Switch to a different shift'}
-                          >
-                            <Repeat size={14} />
-                            {existingRequest ? 'Pending' : 'Switch Shift'}
-                          </button>
+                          <div className="flex flex-row gap-2">
+                            <button
+                              onClick={() => loadCoworkers(shift)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm rounded-lg transition-colors whitespace-nowrap bg-blue-50 text-blue-700 hover:bg-blue-100"
+                              title="View team members on this shift"
+                            >
+                              <Users size={14} />
+                              View Team
+                            </button>
+                            <button
+                              onClick={() => handleOpenSwitchModal(shift)}
+                              disabled={!!existingRequest}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm rounded-lg transition-colors whitespace-nowrap ${
+                                existingRequest
+                                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              }`}
+                              title={existingRequest ? 'Switch request already pending' : 'Switch to a different shift'}
+                            >
+                              <Repeat size={14} />
+                              {existingRequest ? 'Pending' : 'Switch Shift'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -525,7 +582,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       {/* Edit Modal */}
       {isEditing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[calc(100vh-2rem)] overflow-y-auto">
             <button 
               onClick={() => setIsEditing(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -626,7 +683,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       {/* Switch Request Modal */}
       {showSwitchModal && switchRequestShift && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-4 sm:p-6 relative animate-fade-in max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-4 sm:p-6 relative animate-fade-in max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)] overflow-y-auto">
             <button
               onClick={() => setShowSwitchModal(false)}
               className="absolute top-3 right-3 sm:top-4 sm:right-4 text-slate-400 hover:text-slate-600"
@@ -672,7 +729,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <p>There are currently no open shifts that match your location, day, and date preferences. You can still submit to drop this shift without selecting a replacement.</p>
                 </div>
               ) : (
-                <div className="max-h-[50vh] overflow-y-auto border border-slate-200 rounded-lg">
+                <div className="max-h-[35vh] sm:max-h-[45vh] md:max-h-[50vh] overflow-y-auto border border-slate-200 rounded-lg">
                   {availableShiftsForSwitch.map((shift) => {
                     const isSelected = selectedShiftIds.includes(shift.id);
                     return (
@@ -735,6 +792,179 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               >
                 <Repeat size={16} />
                 {isSubmittingSwitchRequest ? 'Switching...' : selectedShiftIds.length > 0 ? `Switch to ${selectedShiftIds.length} Shift${selectedShiftIds.length !== 1 ? 's' : ''}` : 'Drop Shift'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Coworkers Modal */}
+      {showCoworkersModal && coworkersShift && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[calc(100vh-2rem)] overflow-y-auto">
+            <button
+              onClick={() => setShowCoworkersModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <h2 className="text-xl font-bold text-slate-900 mb-2 flex items-center gap-2">
+              <Users className="text-blue-600" />
+              Team Members
+            </h2>
+
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm text-slate-600 mb-1">Shift:</p>
+              <p className="font-bold text-slate-900">{coworkersShift.title}</p>
+              <div className="flex flex-wrap items-center gap-3 mt-2 text-slate-600">
+                <span className="flex items-center gap-1.5 text-sm">
+                  <Calendar size={14}/> {coworkersShift.date}
+                </span>
+                <span className="flex items-center gap-1.5 text-sm">
+                  <Clock size={14}/> {coworkersShift.startTime} - {coworkersShift.endTime}
+                </span>
+              </div>
+            </div>
+
+            {isLoadingCoworkers ? (
+              <div className="py-8 text-center text-slate-500">
+                <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
+                <p className="text-sm">Loading team members...</p>
+              </div>
+            ) : coworkers.length === 0 ? (
+              <div className="py-8 text-center text-slate-500">
+                <Users size={32} className="mx-auto mb-2 text-slate-300" />
+                <p className="text-sm">No other team members on this shift yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-slate-700 mb-3">
+                  {coworkers.length} team member{coworkers.length !== 1 ? 's' : ''} on this shift:
+                </p>
+                {coworkers.map(volunteer => (
+                  <div
+                    key={volunteer.id}
+                    className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
+                        {volunteer.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-900">{volunteer.name}</p>
+                        <p className="text-xs text-slate-500">{volunteer.role}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedVolunteerProfile(volunteer)}
+                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition-colors"
+                      title="View profile"
+                    >
+                      <User size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowCoworkersModal(false)}
+                className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Volunteer Profile Modal */}
+      {selectedVolunteerProfile && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative animate-fade-in">
+            <button
+              onClick={() => setSelectedVolunteerProfile(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-2xl mx-auto mb-4">
+                {selectedVolunteerProfile.name.charAt(0)}
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900">{selectedVolunteerProfile.name}</h2>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-lg">
+                <div className="flex items-center gap-2 text-slate-600 mb-1">
+                  <Phone size={16} />
+                  <span className="text-sm font-medium">Phone</span>
+                </div>
+                <a
+                  href={`tel:${selectedVolunteerProfile.phone}`}
+                  className="text-lg font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  {selectedVolunteerProfile.phone}
+                </a>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-lg">
+                <div className="flex items-center gap-2 text-slate-600 mb-1">
+                  <User size={16} />
+                  <span className="text-sm font-medium">Role</span>
+                </div>
+                <p className="text-lg font-semibold text-slate-900">{selectedVolunteerProfile.role}</p>
+              </div>
+
+              {selectedVolunteerProfile.email && (
+                <div className="bg-slate-50 p-4 rounded-lg">
+                  <div className="flex items-center gap-2 text-slate-600 mb-1">
+                    <User size={16} />
+                    <span className="text-sm font-medium">Email</span>
+                  </div>
+                  <a
+                    href={`mailto:${selectedVolunteerProfile.email}`}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700 break-all"
+                  >
+                    {selectedVolunteerProfile.email}
+                  </a>
+                </div>
+              )}
+
+              {selectedVolunteerProfile.skills && selectedVolunteerProfile.skills.length > 0 && (
+                <div className="bg-slate-50 p-4 rounded-lg">
+                  <p className="text-sm font-medium text-slate-600 mb-2">Skills</p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedVolunteerProfile.skills.map((skill, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full font-medium"
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <a
+                href={`tel:${selectedVolunteerProfile.phone}`}
+                className="flex-1 bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <Phone size={18} />
+                Call
+              </a>
+              <button
+                onClick={() => setSelectedVolunteerProfile(null)}
+                className="px-6 py-2 border border-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>
