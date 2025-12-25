@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
+import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
@@ -582,8 +582,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       scheduleNotesInput
     );
 
-    if (result.success) {
-      alert('Schedule saved successfully!');
+    if (result.success && result.scheduleId) {
+      // Send email notifications to all volunteers in the schedule
+      const notificationResult = await sendScheduleNotifications(
+        result.scheduleId,
+        scheduleNameInput,
+        targetMonth,
+        targetYear
+      );
+
+      if (notificationResult.success) {
+        alert(`Schedule saved successfully! Notifications sent to ${notificationResult.emailsSent} volunteer${notificationResult.emailsSent !== 1 ? 's' : ''}.`);
+      } else {
+        alert(`Schedule saved successfully, but failed to send notifications: ${notificationResult.error}`);
+      }
+
       setShowSaveScheduleModal(false);
       setScheduleNameInput('');
       setScheduleNotesInput('');

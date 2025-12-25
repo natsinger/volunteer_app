@@ -227,3 +227,104 @@ export const getLatestScheduleForMonth = async (
     return { success: false, error: error.message || 'Unknown error' };
   }
 };
+
+/**
+ * Send email notifications to all volunteers in a saved schedule
+ */
+export const sendScheduleNotifications = async (
+  scheduleId: string,
+  scheduleName: string,
+  targetMonth: number,
+  targetYear: number
+): Promise<{ success: boolean; emailsSent: number; error?: string }> => {
+  try {
+    // Load assignments for this schedule
+    const assignmentsResult = await loadScheduleAssignments(scheduleId);
+    if (!assignmentsResult.success || !assignmentsResult.assignments) {
+      return { success: false, emailsSent: 0, error: assignmentsResult.error };
+    }
+
+    // Get unique volunteer IDs
+    const volunteerIds = [...new Set(assignmentsResult.assignments.map(a => a.volunteerId))];
+
+    if (volunteerIds.length === 0) {
+      return { success: true, emailsSent: 0 };
+    }
+
+    // Fetch volunteer details
+    const { data: volunteers, error: volunteersError } = await supabase
+      .from('volunteers')
+      .select('id, name, email')
+      .in('id', volunteerIds);
+
+    if (volunteersError) {
+      console.error('Error fetching volunteers:', volunteersError);
+      return { success: false, emailsSent: 0, error: volunteersError.message };
+    }
+
+    // Get shifts for this schedule to include in the email
+    const shiftIds = assignmentsResult.assignments.map(a => a.shiftId);
+    const { data: shifts, error: shiftsError } = await supabase
+      .from('shifts')
+      .select('id, title, date, start_time, end_time, location')
+      .in('id', shiftIds);
+
+    if (shiftsError) {
+      console.error('Error fetching shifts:', shiftsError);
+      return { success: false, emailsSent: 0, error: shiftsError.message };
+    }
+
+    const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
+
+    // Send notifications to each volunteer
+    let emailsSent = 0;
+    for (const volunteer of volunteers || []) {
+      if (!volunteer.email) continue;
+
+      // Find all shifts assigned to this volunteer
+      const volunteerAssignments = assignmentsResult.assignments.filter(
+        a => a.volunteerId === volunteer.id
+      );
+
+      const volunteerShifts = volunteerAssignments
+        .map(a => shifts?.find(s => s.id === a.shiftId))
+        .filter(s => s != null);
+
+      // Build email content
+      const shiftsList = volunteerShifts
+        .map(s => `• ${s.title} - ${s.date} at ${s.start_time} (${s.location || 'TBD'})`)
+        .join('\n');
+
+      const emailSubject = `Your Schedule for ${monthName} ${targetYear} is Ready!`;
+      const emailBody = `Hi ${volunteer.name},
+
+The schedule "${scheduleName}" for ${monthName} ${targetYear} has been published!
+
+You have been assigned to the following shifts:
+
+${shiftsList}
+
+Please review your assignments and contact us if you have any conflicts or questions.
+
+Thank you for your dedication!
+
+Best regards,
+VolunteerFlow Team`;
+
+      // Log the email (placeholder for actual email sending)
+      console.log(`[Schedule Notification] Would send email to ${volunteer.email}:`);
+      console.log(`Subject: ${emailSubject}`);
+      console.log(`Body:\n${emailBody}\n`);
+
+      emailsSent++;
+    }
+
+    // TODO: Replace console.log with actual email service integration
+    // For example, using Resend, SendGrid, or Supabase Edge Functions
+
+    return { success: true, emailsSent };
+  } catch (error: any) {
+    console.error('Unexpected error sending schedule notifications:', error);
+    return { success: false, emailsSent: 0, error: error.message || 'Unknown error' };
+  }
+};
