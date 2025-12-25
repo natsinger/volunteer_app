@@ -14,6 +14,7 @@ import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
+import { sendPreferenceReminders } from '../services/reminderService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -182,6 +183,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await loadPendingUsers(); // Refresh the list
     } else {
       alert(`Failed to reject user: ${result.error}`);
+    }
+  };
+
+  const handleSendReminders = async () => {
+    if (!confirm('Send preference update reminders to all active volunteers?')) {
+      return;
+    }
+
+    const result = await sendPreferenceReminders();
+    if (result.success) {
+      alert(`Reminder sent to ${result.sent} volunteers!`);
+    } else {
+      alert(`Failed to send reminders: ${result.error}`);
     }
   };
 
@@ -663,10 +677,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const filteredVolunteers = volunteers.filter(v => 
+  const filteredVolunteers = volunteers.filter(v =>
     v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     v.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // Helper function to check if volunteer updated preferences in last 7 days
+  const wasRecentlyUpdated = (updatedAt?: string): boolean => {
+    if (!updatedAt) return false;
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    return new Date(updatedAt) > sevenDaysAgo;
+  };
+
+  // Count recently updated volunteers
+  const recentlyUpdatedCount = volunteers.filter(vol => wasRecentlyUpdated(vol.updatedAt)).length;
 
   const getUpcomingWeekShifts = (allShifts: Shift[]) => {
     const today = new Date();
@@ -977,23 +1002,53 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Volunteers Tab */}
         {activeTab === 'volunteers' && (
           <div className="max-w-7xl mx-auto animate-fade-in">
+            {/* Recently Updated Summary */}
+            {recentlyUpdatedCount > 0 && (
+              <div className="mb-6 bg-gradient-to-r from-emerald-50 to-emerald-100 border border-emerald-200 rounded-xl p-4 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center">
+                  <CheckCircle size={24} className="text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-emerald-900">
+                    {recentlyUpdatedCount} {recentlyUpdatedCount === 1 ? 'volunteer has' : 'volunteers have'} updated preferences in the last 7 days
+                  </h3>
+                  <p className="text-sm text-emerald-700">Volunteers are active! This is a great time to run the auto-scheduler.</p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('auto')}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                >
+                  <Sparkles size={18} /> Go to Auto-Schedule
+                </button>
+              </div>
+            )}
+
             <div className="flex justify-between items-center mb-6">
               <div className="relative w-96">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                <input 
-                  type="text" 
-                  placeholder="Search by name or role..." 
+                <input
+                  type="text"
+                  placeholder="Search by name or role..."
                   className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <button 
-                onClick={() => setShowBulkUpload(true)}
-                className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-medium flex items-center gap-2 hover:bg-slate-50 transition-colors"
-              >
-                <Upload size={18} /> Bulk Import
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSendReminders}
+                  className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                  title="Send reminder to all volunteers to update their preferences"
+                >
+                  <Mail size={18} /> Send Reminder
+                </button>
+                <button
+                  onClick={() => setShowBulkUpload(true)}
+                  className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-medium flex items-center gap-2 hover:bg-slate-50 transition-colors"
+                >
+                  <Upload size={18} /> Bulk Import
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1013,7 +1068,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {filteredVolunteers.map(vol => (
                     <tr key={vol.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4">
-                        <div className="font-medium text-slate-900">{vol.name}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium text-slate-900">{vol.name}</div>
+                          {wasRecentlyUpdated(vol.updatedAt) && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200" title="Updated preferences in the last 7 days">
+                              <CheckCircle size={12} className="mr-1" /> Updated
+                            </span>
+                          )}
+                        </div>
                         <div className="text-sm text-slate-500">{vol.email}</div>
                         <div className="text-xs text-slate-400">{vol.phone}</div>
                       </td>
