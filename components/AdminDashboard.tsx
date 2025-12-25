@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest } from '../types';
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
@@ -13,6 +13,7 @@ import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
 import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
+import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -34,9 +35,11 @@ const DAYS = [
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   volunteers, shifts, setVolunteers, setShifts
 }) => {
-  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto' | 'switchRequests'>('volunteers');
+  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto' | 'switchRequests' | 'pendingUsers'>('volunteers');
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+  const [loadingPendingUsers, setLoadingPendingUsers] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [scheduleResultView, setScheduleResultView] = useState<'none' | 'calendar' | 'stats'>('none');
 
@@ -80,6 +83,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     loadDeletedOccurrences();
     loadScheduleHistory();
     loadSwitchRequests();
+    loadPendingUsers();
   }, []);
 
   // Load last saved schedule for the selected month when it changes
@@ -133,6 +137,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setSwitchRequests(requests);
     } catch (error) {
       console.error('Error loading switch requests:', error);
+    }
+  };
+
+  const loadPendingUsers = async () => {
+    setLoadingPendingUsers(true);
+    try {
+      const users = await getPendingUsers();
+      setPendingUsers(users);
+    } catch (error) {
+      console.error('Error loading pending users:', error);
+    } finally {
+      setLoadingPendingUsers(false);
+    }
+  };
+
+  const handleApproveAsAdmin = async (userId: string, email: string) => {
+    const result = await approveUserAsAdmin(userId, email);
+    if (result.success) {
+      alert(`${email} has been approved as an admin!`);
+      await loadPendingUsers(); // Refresh the list
+    } else {
+      alert(`Failed to approve user: ${result.error}`);
+    }
+  };
+
+  const handleApproveAsVolunteer = async (userId: string, email: string) => {
+    const result = await approveUserAsVolunteer(userId, email);
+    if (result.success) {
+      alert(`${email} has been approved as a volunteer!`);
+      await loadPendingUsers(); // Refresh the list
+    } else {
+      alert(`Failed to approve user: ${result.error}`);
+    }
+  };
+
+  const handleRejectUser = async (userId: string, email: string) => {
+    if (!confirm(`Are you sure you want to reject ${email}? This will delete their account.`)) {
+      return;
+    }
+    const result = await rejectPendingUser(userId);
+    if (result.success) {
+      alert(`${email} has been rejected and removed.`);
+      await loadPendingUsers(); // Refresh the list
+    } else {
+      alert(`Failed to reject user: ${result.error}`);
     }
   };
 
@@ -911,6 +960,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <Repeat size={18} /> Switch Requests {switchRequests.length > 0 && <span className="ml-1 bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">{switchRequests.length}</span>}
           </button>
+          <button
+            onClick={() => setActiveTab('pendingUsers')}
+            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'pendingUsers' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+          >
+            <UserCheck size={18} /> Pending Users {pendingUsers.length > 0 && <span className="ml-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-bold">{pendingUsers.length}</span>}
+          </button>
         </div>
       </header>
 
@@ -1382,6 +1437,94 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Pending Users Tab */}
+        {activeTab === 'pendingUsers' && (
+          <div className="max-w-7xl mx-auto animate-fade-in">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Pending User Approvals</h2>
+                <p className="text-slate-500 text-sm mt-1">Review and approve new users waiting for access</p>
+              </div>
+              <button
+                onClick={loadPendingUsers}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                disabled={loadingPendingUsers}
+              >
+                <RefreshCw size={16} className={loadingPendingUsers ? 'animate-spin' : ''} /> Refresh
+              </button>
+            </div>
+
+            {loadingPendingUsers ? (
+              <div className="bg-white rounded-xl p-12 text-center">
+                <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-slate-500">Loading pending users...</p>
+              </div>
+            ) : pendingUsers.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed border-slate-200">
+                <UserCheck size={48} className="mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">No Pending Users</h3>
+                <p className="text-slate-500">When users sign up, they'll appear here for approval.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {pendingUsers.map(user => (
+                  <div key={user.id} className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
+                          <User size={24} className="text-purple-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-900">{user.email}</h3>
+                          <p className="text-xs text-slate-500">
+                            {user.email_confirmed_at ? (
+                              <span className="text-emerald-600 flex items-center gap-1">
+                                <CheckCircle size={12} /> Email verified
+                              </span>
+                            ) : (
+                              <span className="text-amber-600 flex items-center gap-1">
+                                <Clock size={12} /> Email not verified
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-lg mb-4">
+                      <p className="text-xs text-slate-500 mb-1">Signed up:</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {new Date(user.created_at).toLocaleDateString()} at {new Date(user.created_at).toLocaleTimeString()}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => handleApproveAsAdmin(user.id, user.email)}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <ShieldCheck size={16} /> Approve as Admin
+                      </button>
+                      <button
+                        onClick={() => handleApproveAsVolunteer(user.id, user.email)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <UserCheck size={16} /> Approve as Volunteer
+                      </button>
+                      <button
+                        onClick={() => handleRejectUser(user.id, user.email)}
+                        className="w-full bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <X size={16} /> Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>

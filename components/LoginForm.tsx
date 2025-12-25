@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { LogIn, AlertCircle } from 'lucide-react';
+import { LogIn, AlertCircle, UserPlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const LoginForm: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -11,6 +12,8 @@ const LoginForm: React.FC = () => {
   const [resetEmail, setResetEmail] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [isSignUpMode, setIsSignUpMode] = useState(false);
+  const [signUpSuccess, setSignUpSuccess] = useState(false);
   const { signIn, resetPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -18,13 +21,33 @@ const LoginForm: React.FC = () => {
     setError('');
     setLoading(true);
 
-    const result = await signIn(email, password);
+    if (isSignUpMode) {
+      // Handle sign-up
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin,
+        }
+      });
 
-    if (result.error) {
-      setError(result.error);
-      setLoading(false);
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+      } else {
+        setSignUpSuccess(true);
+        setLoading(false);
+      }
+    } else {
+      // Handle sign-in
+      const result = await signIn(email, password);
+
+      if (result.error) {
+        setError(result.error);
+        setLoading(false);
+      }
+      // If successful, the auth state will update automatically
     }
-    // If successful, the auth state will update automatically
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -61,17 +84,43 @@ const LoginForm: React.FC = () => {
             </div>
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">VolunteerFlow</h1>
-          <p className="text-indigo-100">Sign in to continue</p>
+          <p className="text-indigo-100">{isSignUpMode ? 'Create an account' : 'Sign in to continue'}</p>
         </div>
 
         <div className="p-8">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-                <AlertCircle size={20} className="text-red-600 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-red-800">{error}</div>
+          {signUpSuccess ? (
+            <div className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-emerald-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <div className="text-sm text-emerald-800">
+                    <p className="font-medium mb-1">Account created successfully!</p>
+                    <p>Please check your email to verify your account. After verification, an administrator will approve your access.</p>
+                  </div>
+                </div>
               </div>
-            )}
+              <button
+                onClick={() => {
+                  setSignUpSuccess(false);
+                  setIsSignUpMode(false);
+                  setEmail('');
+                  setPassword('');
+                }}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold transition-colors"
+              >
+                Go to Sign In
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle size={20} className="text-red-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-red-800">{error}</div>
+                </div>
+              )}
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
@@ -113,28 +162,45 @@ const LoginForm: React.FC = () => {
               {loading ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Signing in...
+                  {isSignUpMode ? 'Creating account...' : 'Signing in...'}
                 </>
               ) : (
                 <>
-                  <LogIn size={20} />
-                  Sign In
+                  {isSignUpMode ? <UserPlus size={20} /> : <LogIn size={20} />}
+                  {isSignUpMode ? 'Create Account' : 'Sign In'}
                 </>
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setShowForgotPassword(true);
-                setResetEmail(email);
-              }}
-              disabled={loading}
-              className="w-full text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors disabled:opacity-50"
-            >
-              Forgot Password?
-            </button>
+            {!isSignUpMode && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForgotPassword(true);
+                  setResetEmail(email);
+                }}
+                disabled={loading}
+                className="w-full text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors disabled:opacity-50"
+              >
+                Forgot Password?
+              </button>
+            )}
+
+            <div className="mt-4 pt-4 border-t border-slate-200 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUpMode(!isSignUpMode);
+                  setError('');
+                }}
+                disabled={loading}
+                className="text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors disabled:opacity-50"
+              >
+                {isSignUpMode ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+              </button>
+            </div>
           </form>
+          )}
 
           <div className="mt-6 pt-6 border-t border-slate-200 text-center text-xs text-slate-400">
             Version 2.0 • Your role will be determined automatically
