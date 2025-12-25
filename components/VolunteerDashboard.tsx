@@ -521,27 +521,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <span className="text-slate-500">Shifts Completed</span>
                   <span className="font-bold text-slate-900">12</span>
                 </div>
-                <div className="flex justify-between items-center pb-3 border-b border-slate-50">
+                <div className="flex justify-between items-center">
                   <span className="text-slate-500">Hours This Month</span>
                   <span className="font-bold text-slate-900">24</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500">Reliability Score</span>
-                  <span className="font-bold text-emerald-600">98%</span>
-                </div>
               </div>
-            </div>
-
-            <div className="bg-indigo-900 text-white p-6 rounded-xl shadow-lg relative overflow-hidden">
-              <div className="relative z-10">
-                <h3 className="font-bold text-lg mb-2">Refer a Friend</h3>
-                <p className="text-indigo-200 text-sm mb-4">Know someone who loves to help? Invite them to join our team!</p>
-                <button className="bg-white text-indigo-900 px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-50 transition-colors">
-                  Invite Now
-                </button>
-              </div>
-              <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-indigo-700 rounded-full opacity-50 blur-xl"></div>
-              <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-pink-600 rounded-full opacity-20 blur-xl"></div>
             </div>
           </div>
 
