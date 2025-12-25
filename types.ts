@@ -13,6 +13,7 @@ export interface Volunteer {
   onlyDates: string[]; // If present, can ONLY work these dates YYYY-MM-DD
   availabilityStatus: 'Active' | 'Inactive' | 'On Leave';
   serialNumber?: number;
+  updatedAt?: string; // Timestamp of last update
 }
 
 export interface RecurringShift {
