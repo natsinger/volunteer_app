@@ -88,8 +88,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const volunteer = mapVolunteerFromDB(volunteerData);
         setVolunteerData(volunteer);
 
-        // Check if profile needs completion
-        const profileIncomplete = !volunteer.name || !volunteer.phone;
+        // Check if profile needs completion (name, email, and phone required)
+        const profileIncomplete = !volunteer.name || !volunteer.email || !volunteer.phone;
         setNeedsProfileCompletion(profileIncomplete);
 
         setLoading(false);
@@ -103,14 +103,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: authUser } = await supabase.auth.getUser();
       if (authUser?.user) {
         const provider = authUser.user.app_metadata?.provider || 'email';
-        await supabase.from('pending_users').upsert({
+        const { error: pendingError } = await supabase.from('pending_users').upsert({
           user_id: userId,
           email: authUser.user.email || '',
           provider: provider,
         }, {
           onConflict: 'user_id',
-          ignoreDuplicates: true
+          ignoreDuplicates: false
         });
+
+        if (pendingError) {
+          console.error('Error adding user to pending_users:', pendingError);
+        } else {
+          console.log('User added to pending_users successfully');
+        }
       }
 
       setUserRole(null);

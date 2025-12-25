@@ -930,47 +930,49 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   return (
     <div className="flex flex-col h-full bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-8 py-6 flex justify-between items-center sticky top-0 z-10">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage your team and organize upcoming events</p>
-        </div>
-        <div className="flex gap-2">
-           <button 
-            onClick={() => setActiveTab('volunteers')}
-            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'volunteers' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
-          >
-            <Users size={18} /> Volunteers
-          </button>
-          <button 
-            onClick={() => setActiveTab('shifts')}
-            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'shifts' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
-          >
-            <Calendar size={18} /> Shifts
-          </button>
-          <button
-            onClick={() => setActiveTab('auto')}
-            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'auto' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
-          >
-            <Sparkles size={18} /> Auto-Schedule
-          </button>
-          <button
-            onClick={() => setActiveTab('switchRequests')}
-            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'switchRequests' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
-          >
-            <Repeat size={18} /> Switch Requests {switchRequests.length > 0 && <span className="ml-1 bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">{switchRequests.length}</span>}
-          </button>
-          <button
-            onClick={() => setActiveTab('pendingUsers')}
-            className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all ${activeTab === 'pendingUsers' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
-          >
-            <UserCheck size={18} /> Pending Users {pendingUsers.length > 0 && <span className="ml-1 bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-bold">{pendingUsers.length}</span>}
-          </button>
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-8 py-4 sm:py-6 sticky top-0 z-10">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Admin Dashboard</h1>
+            <p className="text-slate-500 text-xs sm:text-sm mt-1">Manage your team and organize upcoming events</p>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+             <button
+              onClick={() => setActiveTab('volunteers')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'volunteers' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Users size={16} /> <span className="hidden sm:inline">Volunteers</span><span className="sm:hidden">Vol.</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('shifts')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'shifts' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Calendar size={16} /> Shifts
+            </button>
+            <button
+              onClick={() => setActiveTab('auto')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'auto' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Sparkles size={16} /> <span className="hidden sm:inline">Auto-Schedule</span><span className="sm:hidden">Auto</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('switchRequests')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'switchRequests' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Repeat size={16} /> <span className="hidden sm:inline">Switch Requests</span><span className="sm:hidden">Switch</span> {switchRequests.length > 0 && <span className="bg-amber-100 text-amber-800 text-xs px-1.5 sm:px-2 py-0.5 rounded-full font-bold">{switchRequests.length}</span>}
+            </button>
+            <button
+              onClick={() => setActiveTab('pendingUsers')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'pendingUsers' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <UserCheck size={16} /> <span className="hidden sm:inline">Pending Users</span><span className="sm:hidden">Pending</span> {pendingUsers.length > 0 && <span className="bg-purple-100 text-purple-800 text-xs px-1.5 sm:px-2 py-0.5 rounded-full font-bold">{pendingUsers.length}</span>}
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 p-8 overflow-y-auto">
+      <main className="flex-1 p-4 sm:p-8 overflow-y-auto">
         
         {/* Volunteers Tab */}
         {activeTab === 'volunteers' && (
@@ -1445,14 +1447,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Pending Users Tab */}
         {activeTab === 'pendingUsers' && (
           <div className="max-w-7xl mx-auto animate-fade-in">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-slate-900">Pending User Approvals</h2>
-                <p className="text-slate-500 text-sm mt-1">Review and approve new users waiting for access</p>
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Pending User Approvals</h2>
+                <p className="text-slate-500 text-xs sm:text-sm mt-1">Review and approve new users waiting for access</p>
               </div>
               <button
                 onClick={loadPendingUsers}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-sm"
                 disabled={loadingPendingUsers}
               >
                 <RefreshCw size={16} className={loadingPendingUsers ? 'animate-spin' : ''} /> Refresh
@@ -1471,9 +1473,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <p className="text-slate-500">When users sign up, they'll appear here for approval.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                 {pendingUsers.map(user => (
-                  <div key={user.id} className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div key={user.id} className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
@@ -1498,19 +1500,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <div className="space-y-2">
                       <button
                         onClick={() => handleApproveAsAdmin(user.user_id, user.email)}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 px-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-sm"
                       >
-                        <ShieldCheck size={16} /> Approve as Admin
+                        <ShieldCheck size={16} /> <span className="hidden sm:inline">Approve as Admin</span><span className="sm:hidden">Admin</span>
                       </button>
                       <button
                         onClick={() => handleApproveAsVolunteer(user.user_id, user.email)}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-sm"
                       >
-                        <UserCheck size={16} /> Approve as Volunteer
+                        <UserCheck size={16} /> <span className="hidden sm:inline">Approve as Volunteer</span><span className="sm:hidden">Volunteer</span>
                       </button>
                       <button
                         onClick={() => handleRejectUser(user.user_id, user.email)}
-                        className="w-full bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
+                        className="w-full bg-red-100 hover:bg-red-200 text-red-700 py-2.5 px-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-sm"
                       >
                         <X size={16} /> Reject
                       </button>
