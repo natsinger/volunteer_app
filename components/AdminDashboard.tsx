@@ -442,8 +442,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleSkillLevelChange = (id: string, level: 1 | 2 | 3) => {
+  const handleSkillLevelChange = async (id: string, level: 1 | 2 | 3) => {
+    // Update local state immediately for responsive UI
     setVolunteers(prev => prev.map(v => v.id === id ? { ...v, skillLevel: level } : v));
+
+    // Save to database
+    try {
+      const volunteer = volunteers.find(v => v.id === id);
+      if (!volunteer) return;
+
+      const updatedVolunteer = { ...volunteer, skillLevel: level };
+      const dbVolunteer = mapVolunteerToDB(updatedVolunteer);
+
+      const { error } = await supabase
+        .from('volunteers')
+        .update(dbVolunteer)
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error updating skill level:', error);
+        // Revert local state on error
+        setVolunteers(prev => prev.map(v => v.id === id ? volunteer : v));
+      }
+    } catch (error) {
+      console.error('Error saving skill level:', error);
+    }
   };
 
   const handleSaveVolunteerEdit = async () => {
@@ -1810,30 +1833,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
-                  <select 
-                    value={editingVolunteer.role}
-                    onChange={(e) => setEditingVolunteer({...editingVolunteer, role: e.target.value})}
-                    className="w-full p-2 border border-slate-200 rounded-lg outline-none"
-                  >
-                    <option value="EXPERIENCED">Experienced</option>
-                    <option value="NOVICE">Novice</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Frequency</label>
-                  <select 
-                    value={editingVolunteer.frequency}
-                    onChange={(e) => setEditingVolunteer({...editingVolunteer, frequency: e.target.value})}
-                    className="w-full p-2 border border-slate-200 rounded-lg outline-none"
-                  >
-                    <option value="ONCE_A_WEEK">Once a Week</option>
-                    <option value="TWICE_A_MONTH">Twice a Month</option>
-                    <option value="ONCE_A_MONTH">Once a Month</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Frequency</label>
+                <select
+                  value={editingVolunteer.frequency}
+                  onChange={(e) => setEditingVolunteer({...editingVolunteer, frequency: e.target.value})}
+                  className="w-full p-2 border border-slate-200 rounded-lg outline-none"
+                >
+                  <option value="ONCE_A_WEEK">Once a Week</option>
+                  <option value="TWICE_A_MONTH">Twice a Month</option>
+                  <option value="ONCE_A_MONTH">Once a Month</option>
+                </select>
               </div>
 
               <div>
