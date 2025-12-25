@@ -1481,16 +1481,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                         <div>
                           <h3 className="font-semibold text-slate-900">{user.email}</h3>
-                          <p className="text-xs text-slate-500">
-                            {user.email_confirmed_at ? (
-                              <span className="text-emerald-600 flex items-center gap-1">
-                                <CheckCircle size={12} /> Email verified
-                              </span>
-                            ) : (
-                              <span className="text-amber-600 flex items-center gap-1">
-                                <Clock size={12} /> Email not verified
-                              </span>
-                            )}
+                          <p className="text-xs text-slate-500 capitalize">
+                            {user.provider} account
                           </p>
                         </div>
                       </div>
@@ -1505,19 +1497,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                     <div className="space-y-2">
                       <button
-                        onClick={() => handleApproveAsAdmin(user.id, user.email)}
+                        onClick={() => handleApproveAsAdmin(user.user_id, user.email)}
                         className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
                       >
                         <ShieldCheck size={16} /> Approve as Admin
                       </button>
                       <button
-                        onClick={() => handleApproveAsVolunteer(user.id, user.email)}
+                        onClick={() => handleApproveAsVolunteer(user.user_id, user.email)}
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
                       >
                         <UserCheck size={16} /> Approve as Volunteer
                       </button>
                       <button
-                        onClick={() => handleRejectUser(user.id, user.email)}
+                        onClick={() => handleRejectUser(user.user_id, user.email)}
                         className="w-full bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors"
                       >
                         <X size={16} /> Reject

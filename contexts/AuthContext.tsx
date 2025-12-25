@@ -98,6 +98,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // User exists in auth but not in admin or volunteer tables
       console.error('User found in auth but not in admin or volunteer tables');
+
+      // Add to pending_users table if not already there
+      const { data: authUser } = await supabase.auth.getUser();
+      if (authUser?.user) {
+        const provider = authUser.user.app_metadata?.provider || 'email';
+        await supabase.from('pending_users').upsert({
+          user_id: userId,
+          email: authUser.user.email || '',
+          provider: provider,
+        }, {
+          onConflict: 'user_id',
+          ignoreDuplicates: true
+        });
+      }
+
       setUserRole(null);
       setLoading(false);
     } catch (error) {
