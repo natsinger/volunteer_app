@@ -2,62 +2,29 @@ import { supabase } from '../lib/supabase';
 
 export interface PendingUser {
   id: string;
+  user_id: string;
   email: string;
+  provider: string;
   created_at: string;
-  email_confirmed_at: string | null;
 }
 
 /**
- * Fetches users who are in auth.users but not in admins or volunteers tables
+ * Fetches users from pending_users table
  * These are users awaiting admin approval
  */
 export async function getPendingUsers(): Promise<PendingUser[]> {
   try {
-    // Get all auth users
-    const { data: { users }, error: usersError } = await supabase.auth.admin.listUsers();
+    const { data, error } = await supabase
+      .from('pending_users')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    if (usersError) {
-      console.error('Error fetching auth users:', usersError);
+    if (error) {
+      console.error('Error fetching pending users:', error);
       return [];
     }
 
-    if (!users || users.length === 0) {
-      return [];
-    }
-
-    // Get all admins
-    const { data: admins, error: adminsError } = await supabase
-      .from('admins')
-      .select('user_id');
-
-    if (adminsError) {
-      console.error('Error fetching admins:', adminsError);
-    }
-
-    // Get all volunteers
-    const { data: volunteers, error: volunteersError } = await supabase
-      .from('volunteers')
-      .select('user_id');
-
-    if (volunteersError) {
-      console.error('Error fetching volunteers:', volunteersError);
-    }
-
-    // Create sets of user IDs that already have roles
-    const adminUserIds = new Set((admins || []).map(a => a.user_id));
-    const volunteerUserIds = new Set((volunteers || []).map(v => v.user_id));
-
-    // Filter users who don't have a role assigned
-    const pendingUsers = users
-      .filter(user => !adminUserIds.has(user.id) && !volunteerUserIds.has(user.id))
-      .map(user => ({
-        id: user.id,
-        email: user.email || '',
-        created_at: user.created_at,
-        email_confirmed_at: user.email_confirmed_at,
-      }));
-
-    return pendingUsers;
+    return data || [];
   } catch (error) {
     console.error('Error getting pending users:', error);
     return [];
@@ -66,6 +33,7 @@ export async function getPendingUsers(): Promise<PendingUser[]> {
 
 /**
  * Approves a pending user as an admin
+ * The database trigger will automatically remove them from pending_users
  */
 export async function approveUserAsAdmin(userId: string, email: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -81,6 +49,7 @@ export async function approveUserAsAdmin(userId: string, email: string): Promise
       return { success: false, error: error.message };
     }
 
+    // Trigger will automatically remove from pending_users
     return { success: true };
   } catch (error) {
     console.error('Error approving user as admin:', error);
@@ -91,6 +60,7 @@ export async function approveUserAsAdmin(userId: string, email: string): Promise
 /**
  * Approves a pending user as a volunteer with basic info
  * They will need to complete their profile after first login
+ * The database trigger will automatically remove them from pending_users
  */
 export async function approveUserAsVolunteer(
   userId: string,
@@ -117,6 +87,7 @@ export async function approveUserAsVolunteer(
       return { success: false, error: error.message };
     }
 
+    // Trigger will automatically remove from pending_users
     return { success: true };
   } catch (error) {
     console.error('Error approving user as volunteer:', error);
@@ -125,11 +96,16 @@ export async function approveUserAsVolunteer(
 }
 
 /**
- * Rejects a pending user by deleting them from auth
+ * Rejects a pending user by removing them from pending_users table
+ * Note: This doesn't delete the auth user, just removes them from pending approval
+ * If you want to delete the auth user completely, you'll need to do that manually in Supabase
  */
 export async function rejectPendingUser(userId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const { error } = await supabase.auth.admin.deleteUser(userId);
+    const { error } = await supabase
+      .from('pending_users')
+      .delete()
+      .eq('user_id', userId);
 
     if (error) {
       console.error('Error rejecting user:', error);

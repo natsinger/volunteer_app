@@ -34,7 +34,14 @@ const LoginForm: React.FC = () => {
       if (error) {
         setError(error.message);
         setLoading(false);
-      } else {
+      } else if (data.user) {
+        // Add to pending_users table
+        await supabase.from('pending_users').insert({
+          user_id: data.user.id,
+          email: data.user.email,
+          provider: 'email',
+        });
+
         setSignUpSuccess(true);
         setLoading(false);
       }
