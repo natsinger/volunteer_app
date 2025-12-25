@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, User, Mail, Phone, Home } from 'lucide-react';
+import { CheckCircle, User, Mail, Phone } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB } from '../lib/mappers';
@@ -18,8 +18,8 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
 
   // Form fields
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
 
   useEffect(() => {
     checkExistingProfile();
@@ -42,11 +42,11 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
 
         // Pre-fill form with existing data
         setName(volunteer.name || '');
+        setEmail(volunteer.email || '');
         setPhone(volunteer.phone || '');
-        setAddress(volunteer.address || '');
 
         // Check if profile is complete
-        if (volunteer.name && volunteer.phone) {
+        if (volunteer.name && volunteer.email && volunteer.phone) {
           setProfileComplete(true);
         }
       } else {
@@ -69,10 +69,10 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
             const volunteer = mapVolunteerFromDB({ ...unmatchedVolunteer, user_id: user.id });
             setExistingVolunteer(volunteer);
             setName(volunteer.name || '');
+            setEmail(volunteer.email || '');
             setPhone(volunteer.phone || '');
-            setAddress(volunteer.address || '');
 
-            if (volunteer.name && volunteer.phone) {
+            if (volunteer.name && volunteer.email && volunteer.phone) {
               setProfileComplete(true);
             }
           }
@@ -103,8 +103,8 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
           .from('volunteers')
           .update({
             name,
+            email,
             phone,
-            address,
             updated_at: new Date().toISOString()
           })
           .eq('id', existingVolunteer.id)
@@ -185,16 +185,6 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
             </div>
           )}
 
-          <div className="mb-6 bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <Mail size={20} className="text-emerald-600 mt-0.5 flex-shrink-0" />
-              <div className="text-sm">
-                <p className="font-medium text-emerald-900">Your Email</p>
-                <p className="text-emerald-700">{user?.email}</p>
-              </div>
-            </div>
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-2">
@@ -216,6 +206,25 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
             </div>
 
             <div>
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <Mail size={16} />
+                  Email Address
+                </div>
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                placeholder="your@email.com"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div>
               <label htmlFor="phone" className="block text-sm font-medium text-slate-700 mb-2">
                 <div className="flex items-center gap-2">
                   <Phone size={16} />
@@ -230,24 +239,6 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                 placeholder="(555) 123-4567"
                 required
-                disabled={loading}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="address" className="block text-sm font-medium text-slate-700 mb-2">
-                <div className="flex items-center gap-2">
-                  <Home size={16} />
-                  Address <span className="text-slate-400 text-xs">(Optional)</span>
-                </div>
-              </label>
-              <textarea
-                id="address"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                placeholder="Enter your address (optional)"
-                rows={3}
                 disabled={loading}
               />
             </div>

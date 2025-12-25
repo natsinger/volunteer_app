@@ -88,8 +88,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const volunteer = mapVolunteerFromDB(volunteerData);
         setVolunteerData(volunteer);
 
-        // Check if profile needs completion
-        const profileIncomplete = !volunteer.name || !volunteer.phone;
+        // Check if profile needs completion (name, email, and phone required)
+        const profileIncomplete = !volunteer.name || !volunteer.email || !volunteer.phone;
         setNeedsProfileCompletion(profileIncomplete);
 
         setLoading(false);
