@@ -26,8 +26,16 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<Volunteer>(currentUser);
   const [newBlackoutDate, setNewBlackoutDate] = useState('');
+  const [newBlackoutEndDate, setNewBlackoutEndDate] = useState('');
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
+
+  // Get first day of next month as default for date picker
+  const getDefaultMinDate = () => {
+    const today = new Date();
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    return nextMonth.toISOString().split('T')[0];
+  };
 
   // Switch request state
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
@@ -338,13 +346,38 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   const addBlackoutDate = () => {
     if (!newBlackoutDate) return;
-    if (!editForm.blackoutDates.includes(newBlackoutDate)) {
-      setEditForm({ 
-        ...editForm, 
-        blackoutDates: [...editForm.blackoutDates, newBlackoutDate] 
+
+    const datesToAdd: string[] = [];
+
+    // If end date is specified, add all dates in range
+    if (newBlackoutEndDate && newBlackoutEndDate >= newBlackoutDate) {
+      const startDate = new Date(newBlackoutDate);
+      const endDate = new Date(newBlackoutEndDate);
+
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!editForm.blackoutDates.includes(dateStr)) {
+          datesToAdd.push(dateStr);
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    } else {
+      // Single date
+      if (!editForm.blackoutDates.includes(newBlackoutDate)) {
+        datesToAdd.push(newBlackoutDate);
+      }
+    }
+
+    if (datesToAdd.length > 0) {
+      setEditForm({
+        ...editForm,
+        blackoutDates: [...editForm.blackoutDates, ...datesToAdd].sort()
       });
     }
+
     setNewBlackoutDate('');
+    setNewBlackoutEndDate('');
   };
 
   const removeBlackoutDate = (date: string) => {
@@ -630,20 +663,35 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             {/* Blackout Dates */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-slate-700 mb-2">Unavailable Dates (Blackout)</label>
-              <div className="flex gap-2 mb-3">
-                <input
-                  type="date"
-                  className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                  value={newBlackoutDate}
-                  onChange={(e) => setNewBlackoutDate(e.target.value)}
-                />
-                <button 
-                  onClick={addBlackoutDate}
-                  disabled={!newBlackoutDate}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 rounded-lg disabled:opacity-50"
-                >
-                  <Plus size={20} />
-                </button>
+              <p className="text-xs text-slate-500 mb-2">Select a single date or a date range</p>
+              <div className="space-y-2 mb-3">
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="date"
+                    className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                    value={newBlackoutDate}
+                    onChange={(e) => setNewBlackoutDate(e.target.value)}
+                    min={getDefaultMinDate()}
+                    placeholder="Start date"
+                  />
+                  <span className="text-slate-400 text-sm">to</span>
+                  <input
+                    type="date"
+                    className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                    value={newBlackoutEndDate}
+                    onChange={(e) => setNewBlackoutEndDate(e.target.value)}
+                    min={newBlackoutDate || getDefaultMinDate()}
+                    placeholder="End date (optional)"
+                  />
+                  <button
+                    onClick={addBlackoutDate}
+                    disabled={!newBlackoutDate}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                  >
+                    <Plus size={18} />
+                    Add
+                  </button>
+                </div>
               </div>
               
               <div className="flex flex-wrap gap-2">
