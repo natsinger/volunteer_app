@@ -36,11 +36,16 @@ const LoginForm: React.FC = () => {
         setLoading(false);
       } else if (data.user) {
         // Add to pending_users table
-        await supabase.from('pending_users').insert({
+        const { error: pendingError } = await supabase.from('pending_users').insert({
           user_id: data.user.id,
           email: data.user.email,
           provider: 'email',
         });
+
+        if (pendingError) {
+          console.error('Error adding to pending_users:', pendingError);
+          // Still show success - the AuthContext will handle adding to pending_users on login
+        }
 
         setSignUpSuccess(true);
         setLoading(false);
