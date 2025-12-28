@@ -30,6 +30,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
 
+  // Keep editForm synchronized with currentUser changes
+  useEffect(() => {
+    setEditForm(currentUser);
+  }, [currentUser]);
+
   // Get first day of next month as default for date picker
   const getDefaultMinDate = () => {
     const today = new Date();
@@ -607,7 +612,46 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <X size={20} />
             </button>
             
-            <h2 className="text-xl font-bold text-slate-900 mb-6">Edit Availability & Preferences</h2>
+            <h2 className="text-xl font-bold text-slate-900 mb-6">Edit Profile & Availability</h2>
+
+            {/* Profile Information */}
+            <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Personal Information</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                    className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={editForm.email}
+                      onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                      className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                    <input
+                      type="tel"
+                      value={editForm.phone}
+                      onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                      className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* Preferred Location */}
             <div className="mb-6">
