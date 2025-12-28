@@ -12,7 +12,7 @@ import { mapVolunteerFromDB, mapShiftFromDB, mapVolunteerToDB, mapShiftToDB } fr
 import { LogOut } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { user, userRole, volunteerData, loading, signOut, needsProfileCompletion, setNeedsProfileCompletion } = useAuth();
+  const { user, userRole, volunteerData, loading, signOut, needsProfileCompletion, setNeedsProfileCompletion, refreshVolunteerData } = useAuth();
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
@@ -172,7 +172,9 @@ const AppContent: React.FC = () => {
                 .eq('id', updatedVolunteer.id);
 
               if (!error) {
-                // Reload data to get fresh state
+                // Refresh volunteer data from database
+                await refreshVolunteerData();
+                // Reload shifts data
                 loadData();
               }
             }}

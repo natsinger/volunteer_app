@@ -14,6 +14,7 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<{ error?: string; success?: boolean }>;
   needsProfileCompletion: boolean;
   setNeedsProfileCompletion: (value: boolean) => void;
+  refreshVolunteerData: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -169,6 +170,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshVolunteerData = async () => {
+    if (!user) return;
+
+    try {
+      const { data: volunteerDataFromDB, error } = await supabase
+        .from('volunteers')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (volunteerDataFromDB && !error) {
+        const volunteer = mapVolunteerFromDB(volunteerDataFromDB);
+        setVolunteerData(volunteer);
+
+        // Update profile completion status
+        const profileIncomplete = !volunteer.name || !volunteer.email || !volunteer.phone;
+        setNeedsProfileCompletion(profileIncomplete);
+      }
+    } catch (error) {
+      console.error('Error refreshing volunteer data:', error);
+    }
+  };
+
   const value = {
     user,
     userRole,
@@ -179,6 +203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resetPassword,
     needsProfileCompletion,
     setNeedsProfileCompletion,
+    refreshVolunteerData,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
