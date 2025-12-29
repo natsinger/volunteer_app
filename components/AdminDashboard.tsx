@@ -48,6 +48,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
+  const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
+  const [adminNewBlackoutEndDate, setAdminNewBlackoutEndDate] = useState('');
 
   // Recurring Shift Management State
   const [recurringShifts, setRecurringShifts] = useState<RecurringShift[]>([]);
@@ -467,6 +469,56 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } catch (error) {
       console.error('Error saving skill level:', error);
     }
+  };
+
+  const addAdminBlackoutDate = () => {
+    if (!adminNewBlackoutDate || !editingVolunteer) return;
+
+    const datesToAdd: string[] = [];
+
+    // If end date is specified, add all dates in range
+    if (adminNewBlackoutEndDate && adminNewBlackoutEndDate >= adminNewBlackoutDate) {
+      const startDate = new Date(adminNewBlackoutDate);
+      const endDate = new Date(adminNewBlackoutEndDate);
+
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!editingVolunteer.blackoutDates.includes(dateStr)) {
+          datesToAdd.push(dateStr);
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    } else {
+      // Single date
+      if (!editingVolunteer.blackoutDates.includes(adminNewBlackoutDate)) {
+        datesToAdd.push(adminNewBlackoutDate);
+      }
+    }
+
+    if (datesToAdd.length > 0) {
+      setEditingVolunteer({
+        ...editingVolunteer,
+        blackoutDates: [...editingVolunteer.blackoutDates, ...datesToAdd].sort()
+      });
+    }
+
+    setAdminNewBlackoutDate('');
+    setAdminNewBlackoutEndDate('');
+  };
+
+  const removeAdminBlackoutDate = (date: string) => {
+    if (!editingVolunteer) return;
+    setEditingVolunteer({
+      ...editingVolunteer,
+      blackoutDates: editingVolunteer.blackoutDates.filter(d => d !== date)
+    });
+  };
+
+  const getDefaultMinDate = () => {
+    const today = new Date();
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    return nextMonth.toISOString().split('T')[0];
   };
 
   const handleSaveVolunteerEdit = async () => {
@@ -1794,8 +1846,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {editingVolunteer && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[90vh] overflow-y-auto">
-            <button 
-              onClick={() => setEditingVolunteer(null)}
+            <button
+              onClick={() => {
+                setEditingVolunteer(null);
+                setAdminNewBlackoutDate('');
+                setAdminNewBlackoutEndDate('');
+              }}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
               <X size={20} />
@@ -1870,7 +1926,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <button
                           key={day.id}
                           onClick={() => {
-                            const newDays = isSelected 
+                            const newDays = isSelected
                               ? editingVolunteer.preferredDays.filter(d => d !== day.id)
                               : [...editingVolunteer.preferredDays, day.id];
                             setEditingVolunteer({...editingVolunteer, preferredDays: newDays});
@@ -1884,11 +1940,64 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                  </div>
               </div>
 
+              {/* Blackout Dates */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Unavailable Dates (Blackout)</label>
+                <p className="text-xs text-slate-500 mb-2">Select a single date or a date range</p>
+                <div className="space-y-2 mb-3">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewBlackoutDate}
+                      onChange={(e) => setAdminNewBlackoutDate(e.target.value)}
+                      min={getDefaultMinDate()}
+                      placeholder="Start date"
+                    />
+                    <span className="text-slate-400 text-sm">to</span>
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewBlackoutEndDate}
+                      onChange={(e) => setAdminNewBlackoutEndDate(e.target.value)}
+                      min={adminNewBlackoutDate || getDefaultMinDate()}
+                      placeholder="End date (optional)"
+                    />
+                    <button
+                      onClick={addAdminBlackoutDate}
+                      disabled={!adminNewBlackoutDate}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Plus size={18} />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {editingVolunteer.blackoutDates.map(date => (
+                    <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
+                      {date}
+                      <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  {editingVolunteer.blackoutDates.length === 0 && (
+                    <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                  )}
+                </div>
+              </div>
+
             </div>
 
             <div className="flex justify-end gap-3 mt-6">
               <button
-                onClick={() => setEditingVolunteer(null)}
+                onClick={() => {
+                  setEditingVolunteer(null);
+                  setAdminNewBlackoutDate('');
+                  setAdminNewBlackoutEndDate('');
+                }}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium"
               >
                 Cancel
