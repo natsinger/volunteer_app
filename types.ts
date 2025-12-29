@@ -14,6 +14,7 @@ export interface Volunteer {
   availabilityStatus: 'Active' | 'Inactive' | 'On Leave';
   serialNumber?: number;
   updatedAt?: string; // Timestamp of last update
+  avatarUrl?: string; // URL to profile picture in Supabase Storage
 }
 
 export interface RecurringShift {

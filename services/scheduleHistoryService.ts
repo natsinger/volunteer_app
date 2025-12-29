@@ -229,7 +229,8 @@ export const getLatestScheduleForMonth = async (
 };
 
 /**
- * Send email notifications to all volunteers in a saved schedule
+ * Send email notifications to all volunteers when a schedule is published
+ * Sends to ALL active volunteers, not just those with assignments
  */
 export const sendScheduleNotifications = async (
   scheduleId: string,
@@ -244,26 +245,23 @@ export const sendScheduleNotifications = async (
       return { success: false, emailsSent: 0, error: assignmentsResult.error };
     }
 
-    // Get unique volunteer IDs
-    const volunteerIds = [...new Set(assignmentsResult.assignments.map(a => a.volunteerId))];
-
-    if (volunteerIds.length === 0) {
-      return { success: true, emailsSent: 0 };
-    }
-
-    // Fetch volunteer details
-    const { data: volunteers, error: volunteersError } = await supabase
+    // Fetch ALL active volunteers (not just assigned ones)
+    const { data: allVolunteers, error: volunteersError } = await supabase
       .from('volunteers')
       .select('id, name, email')
-      .in('id', volunteerIds);
+      .eq('availability_status', 'Active');
 
     if (volunteersError) {
       console.error('Error fetching volunteers:', volunteersError);
       return { success: false, emailsSent: 0, error: volunteersError.message };
     }
 
-    // Get shifts for this schedule to include in the email
-    const shiftIds = assignmentsResult.assignments.map(a => a.shiftId);
+    if (!allVolunteers || allVolunteers.length === 0) {
+      return { success: true, emailsSent: 0 };
+    }
+
+    // Get all shifts for this schedule to show context
+    const shiftIds = [...new Set(assignmentsResult.assignments.map(a => a.shiftId))];
     const { data: shifts, error: shiftsError } = await supabase
       .from('shifts')
       .select('id, title, date, start_time, end_time, location')
@@ -276,9 +274,9 @@ export const sendScheduleNotifications = async (
 
     const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
 
-    // Send notifications to each volunteer
+    // Send notifications to ALL active volunteers
     let emailsSent = 0;
-    for (const volunteer of volunteers || []) {
+    for (const volunteer of allVolunteers) {
       if (!volunteer.email) continue;
 
       // Find all shifts assigned to this volunteer
@@ -290,13 +288,17 @@ export const sendScheduleNotifications = async (
         .map(a => shifts?.find(s => s.id === a.shiftId))
         .filter(s => s != null);
 
-      // Build email content
-      const shiftsList = volunteerShifts
-        .map(s => `• ${s.title} - ${s.date} at ${s.start_time} (${s.location || 'TBD'})`)
-        .join('\n');
+      // Build email content based on whether they have assignments
+      let emailBody: string;
+      const emailSubject = `${monthName} ${targetYear} Schedule Published!`;
 
-      const emailSubject = `Your Schedule for ${monthName} ${targetYear} is Ready!`;
-      const emailBody = `Hi ${volunteer.name},
+      if (volunteerShifts.length > 0) {
+        // Has assignments - show their specific shifts
+        const shiftsList = volunteerShifts
+          .map(s => `• ${s.title} - ${s.date} at ${s.start_time} (${s.location || 'TBD'})`)
+          .join('\n');
+
+        emailBody = `Hi ${volunteer.name},
 
 The schedule "${scheduleName}" for ${monthName} ${targetYear} has been published!
 
@@ -310,6 +312,21 @@ Thank you for your dedication!
 
 Best regards,
 VolunteerFlow Team`;
+      } else {
+        // No assignments - notify them the schedule is ready but they're not assigned
+        emailBody = `Hi ${volunteer.name},
+
+The schedule "${scheduleName}" for ${monthName} ${targetYear} has been published!
+
+You are not scheduled for any shifts this month. If you believe this is an error or would like to be added to the schedule, please contact us.
+
+You can view the complete monthly schedule in your volunteer dashboard.
+
+Thank you!
+
+Best regards,
+VolunteerFlow Team`;
+      }
 
       // Log the email (placeholder for actual email sending)
       console.log(`[Schedule Notification] Would send email to ${volunteer.email}:`);

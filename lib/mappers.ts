@@ -19,6 +19,7 @@ interface VolunteerRow {
   serial_number?: number;
   created_at?: string;
   updated_at?: string;
+  avatar_url?: string;
 }
 
 interface ShiftRow {
@@ -74,6 +75,7 @@ export const mapVolunteerFromDB = (row: VolunteerRow): Volunteer => ({
   availabilityStatus: row.availability_status as 'Active' | 'Inactive' | 'On Leave',
   serialNumber: row.serial_number,
   updatedAt: row.updated_at,
+  avatarUrl: row.avatar_url,
 });
 
 // Map TypeScript Volunteer to database row format
@@ -93,6 +95,7 @@ export const mapVolunteerToDB = (volunteer: Volunteer): Partial<VolunteerRow> =>
   availability_status: volunteer.availabilityStatus,
   serial_number: volunteer.serialNumber,
   updated_at: new Date().toISOString(), // Always set current timestamp when saving
+  avatar_url: volunteer.avatarUrl,
 });
 
 // Map database shift row to TypeScript Shift interface

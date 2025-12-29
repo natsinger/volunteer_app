@@ -10,6 +10,30 @@ export const applyScheduleAssignments = async (
   assignments: Array<{ shiftId: string; volunteerId: string }>
 ): Promise<{ success: boolean; error?: string }> => {
   try {
+    // Validate that all volunteer IDs exist in the database
+    const uniqueVolunteerIds = [...new Set(assignments.map(a => a.volunteerId))];
+
+    const { data: existingVolunteers, error: validateError } = await supabase
+      .from('volunteers')
+      .select('id')
+      .in('id', uniqueVolunteerIds);
+
+    if (validateError) {
+      console.error('Error validating volunteer IDs:', validateError);
+      return { success: false, error: `Failed to validate volunteers: ${validateError.message}` };
+    }
+
+    const existingIds = new Set((existingVolunteers || []).map(v => v.id));
+    const missingIds = uniqueVolunteerIds.filter(id => !existingIds.has(id));
+
+    if (missingIds.length > 0) {
+      console.error('Invalid volunteer IDs detected:', missingIds);
+      return {
+        success: false,
+        error: `Cannot assign shifts to ${missingIds.length} invalid volunteer(s). Please refresh the page and try again.`
+      };
+    }
+
     // Map to database format
     const assignmentRecords = assignments.map(a => ({
       shift_id: a.shiftId,
