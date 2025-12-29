@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone } from 'lucide-react';
-import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest } from '../types';
+import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
+import { loadSavedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
 import { supabase } from '../lib/supabase';
-import { mapVolunteerFromDB } from '../lib/mappers';
+import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -60,6 +61,16 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [selectedVolunteerProfile, setSelectedVolunteerProfile] = useState<Volunteer | null>(null);
   // Store coworkers for each shift (shift ID -> volunteer list)
   const [shiftCoworkers, setShiftCoworkers] = useState<Record<string, Volunteer[]>>({});
+
+  // Tab navigation state
+  const [activeTab, setActiveTab] = useState<'my-shifts' | 'monthly-schedule'>('my-shifts');
+
+  // Monthly schedule state
+  const [monthlySchedules, setMonthlySchedules] = useState<SavedSchedule[]>([]);
+  const [selectedSchedule, setSelectedSchedule] = useState<SavedSchedule | null>(null);
+  const [scheduleShifts, setScheduleShifts] = useState<Shift[]>([]);
+  const [scheduleAssignments, setScheduleAssignments] = useState<SavedScheduleAssignment[]>([]);
+  const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
 
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
@@ -149,6 +160,77 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       console.error('Error loading switch requests:', error);
     }
   };
+
+  const loadMonthlySchedules = async () => {
+    setIsLoadingSchedule(true);
+    try {
+      // Load all saved schedules
+      const result = await loadSavedSchedules();
+      if (result.success && result.schedules) {
+        // Sort by date (most recent first)
+        const sorted = result.schedules.sort((a, b) => {
+          if (a.targetYear !== b.targetYear) return b.targetYear - a.targetYear;
+          return b.targetMonth - a.targetMonth;
+        });
+        setMonthlySchedules(sorted);
+
+        // Auto-select the most recent schedule
+        if (sorted.length > 0 && !selectedSchedule) {
+          await loadScheduleDetails(sorted[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading monthly schedules:', error);
+    } finally {
+      setIsLoadingSchedule(false);
+    }
+  };
+
+  const loadScheduleDetails = async (schedule: SavedSchedule) => {
+    setIsLoadingSchedule(true);
+    setSelectedSchedule(schedule);
+    try {
+      // Load assignments for this schedule
+      const assignmentsResult = await loadScheduleAssignments(schedule.id);
+      if (assignmentsResult.success && assignmentsResult.assignments) {
+        setScheduleAssignments(assignmentsResult.assignments);
+
+        // Get unique shift IDs
+        const shiftIds = [...new Set(assignmentsResult.assignments.map(a => a.shiftId))];
+
+        // Fetch shift details
+        if (shiftIds.length > 0) {
+          const { data, error } = await supabase
+            .from('shifts')
+            .select('*')
+            .in('id', shiftIds);
+
+          if (!error && data) {
+            const shifts = data.map(mapShiftFromDB).sort((a, b) => {
+              // Sort by date and time
+              if (a.date !== b.date) return a.date.localeCompare(b.date);
+              return a.startTime.localeCompare(b.startTime);
+            });
+            setScheduleShifts(shifts);
+
+            // Load coworkers for all shifts
+            await loadAllCoworkers(shiftIds);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading schedule details:', error);
+    } finally {
+      setIsLoadingSchedule(false);
+    }
+  };
+
+  // Load monthly schedules when tab switches to monthly-schedule
+  useEffect(() => {
+    if (activeTab === 'monthly-schedule' && monthlySchedules.length === 0) {
+      loadMonthlySchedules();
+    }
+  }, [activeTab]);
 
   const loadCoworkers = async (shift: Shift) => {
     setIsLoadingCoworkers(true);
@@ -502,10 +584,42 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Tab Navigation */}
+        <div className="mb-6 bg-white rounded-xl shadow-sm border border-slate-200 p-1 flex gap-1">
+          <button
+            onClick={() => setActiveTab('my-shifts')}
+            className={`flex-1 px-4 py-3 rounded-lg font-medium text-sm sm:text-base transition-all ${
+              activeTab === 'my-shifts'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <Calendar size={18} />
+              <span>My Shifts</span>
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('monthly-schedule')}
+            className={`flex-1 px-4 py-3 rounded-lg font-medium text-sm sm:text-base transition-all ${
+              activeTab === 'monthly-schedule'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <Users size={18} />
+              <span>Monthly Schedule</span>
+            </span>
+          </button>
+        </div>
 
-          {/* My Upcoming Shifts */}
-          <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+        {/* My Shifts Tab Content */}
+        {activeTab === 'my-shifts' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            {/* My Upcoming Shifts */}
+            <div className="lg:col-span-2 space-y-4 sm:space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-base sm:text-xl font-bold text-slate-900 flex items-center gap-2">
                 <Calendar className="text-indigo-600 flex-shrink-0" size={20} />
@@ -703,6 +817,162 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 );
               })}
             </div>
+          </div>
+        )}
+        </div>
+        )}
+
+        {/* Monthly Schedule Tab Content */}
+        {activeTab === 'monthly-schedule' && (
+          <div className="space-y-6">
+            {/* Schedule Selector */}
+            {monthlySchedules.length > 0 && (
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Select Month</label>
+                <select
+                  value={selectedSchedule?.id || ''}
+                  onChange={(e) => {
+                    const schedule = monthlySchedules.find(s => s.id === e.target.value);
+                    if (schedule) loadScheduleDetails(schedule);
+                  }}
+                  className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  {monthlySchedules.map(schedule => (
+                    <option key={schedule.id} value={schedule.id}>
+                      {new Date(schedule.targetYear, schedule.targetMonth - 1).toLocaleDateString('en-US', {
+                        month: 'long',
+                        year: 'numeric'
+                      })} - {schedule.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Schedule Content */}
+            {isLoadingSchedule ? (
+              <div className="bg-white p-10 rounded-xl border border-slate-200 text-center">
+                <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-indigo-600" />
+                <p className="text-slate-500">Loading schedule...</p>
+              </div>
+            ) : !selectedSchedule ? (
+              <div className="bg-white p-10 rounded-xl border-2 border-dashed border-slate-200 text-center">
+                <Calendar size={48} className="mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">No Schedules Available</h3>
+                <p className="text-slate-500">The admin hasn't published any monthly schedules yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Schedule Header */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <h2 className="text-xl font-bold text-slate-900 mb-2">{selectedSchedule.name}</h2>
+                  <p className="text-slate-600 mb-1">
+                    {new Date(selectedSchedule.targetYear, selectedSchedule.targetMonth - 1).toLocaleDateString('en-US', {
+                      month: 'long',
+                      year: 'numeric'
+                    })}
+                  </p>
+                  {selectedSchedule.notes && (
+                    <p className="text-sm text-slate-500 mt-3 p-3 bg-slate-50 rounded-lg">{selectedSchedule.notes}</p>
+                  )}
+                  <p className="text-xs text-slate-400 mt-3">
+                    Published {new Date(selectedSchedule.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+
+                {/* All Shifts in Schedule */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                    <Calendar className="text-indigo-600" size={20} />
+                    All Shifts ({scheduleShifts.length})
+                  </h3>
+
+                  {scheduleShifts.length === 0 ? (
+                    <p className="text-slate-500 text-center py-4">No shifts in this schedule</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {scheduleShifts.map(shift => {
+                        // Check if this shift is assigned to current user
+                        const isMyShift = scheduleAssignments.some(
+                          a => a.shiftId === shift.id && a.volunteerId === currentUser.id
+                        );
+                        const shiftTeam = shiftCoworkers[shift.id] || [];
+
+                        return (
+                          <div
+                            key={shift.id}
+                            className={`p-4 rounded-xl border-l-4 transition-all ${
+                              isMyShift
+                                ? 'bg-indigo-50 border-indigo-500 shadow-sm'
+                                : 'bg-slate-50 border-slate-300'
+                            }`}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <h4 className="font-bold text-slate-900">{shift.title}</h4>
+                                  {isMyShift && (
+                                    <span className="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                                      YOUR SHIFT
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-3 text-slate-600 text-sm mb-2">
+                                  <span className="flex items-center gap-1.5">
+                                    <Calendar size={14}/> {shift.date}
+                                  </span>
+                                  <span className="flex items-center gap-1.5">
+                                    <Clock size={14}/> {shift.startTime} - {shift.endTime}
+                                  </span>
+                                  {shift.location && (
+                                    <span className="flex items-center gap-1.5">
+                                      <MapPin size={14}/> {shift.location}
+                                    </span>
+                                  )}
+                                </div>
+                                {/* Team Members */}
+                                {shiftTeam.length > 0 && (
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <Users size={14} className="text-slate-500" />
+                                    <div className="flex items-center gap-1">
+                                      {shiftTeam.slice(0, 5).map((volunteer, idx) => (
+                                        <div
+                                          key={volunteer.id}
+                                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold border-2 border-white ${
+                                            volunteer.id === currentUser.id
+                                              ? 'bg-indigo-600 text-white'
+                                              : 'bg-slate-200 text-slate-700'
+                                          }`}
+                                          style={{ marginLeft: idx > 0 ? '-6px' : '0' }}
+                                          title={volunteer.name}
+                                        >
+                                          {volunteer.name.charAt(0).toUpperCase()}
+                                        </div>
+                                      ))}
+                                      {shiftTeam.length > 5 && (
+                                        <div
+                                          className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-xs font-semibold text-slate-600 border-2 border-white"
+                                          style={{ marginLeft: '-6px' }}
+                                        >
+                                          +{shiftTeam.length - 5}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span className="text-xs text-slate-500 ml-1">
+                                      {shiftTeam.length} volunteer{shiftTeam.length !== 1 ? 's' : ''}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
