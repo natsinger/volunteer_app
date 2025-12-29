@@ -33,6 +33,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   // Keep editForm synchronized with currentUser changes
   useEffect(() => {
+    console.log('[VolunteerDashboard] currentUser changed, updating editForm');
     setEditForm(currentUser);
   }, [currentUser]);
 
@@ -332,12 +333,14 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const handleSave = async () => {
+    console.log('[VolunteerDashboard] Saving changes...', editForm);
     setIsSaving(true);
     try {
       await updateVolunteer(editForm);
+      console.log('[VolunteerDashboard] Save completed successfully');
       setIsEditing(false);
     } catch (error) {
-      console.error('Error saving volunteer data:', error);
+      console.error('[VolunteerDashboard] Error saving volunteer data:', error);
       alert('Failed to save changes. Please try again.');
     } finally {
       setIsSaving(false);
