@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
 import { loadSavedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
+import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -31,6 +32,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Avatar upload state
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Keep editForm synchronized with currentUser changes
   useEffect(() => {
@@ -476,6 +482,49 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     )
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  const handleAvatarUpload = async (file: File) => {
+    setIsUploadingAvatar(true);
+    try {
+      // Compress the image before uploading
+      const compressedFile = await compressImage(file);
+
+      // Get user ID from Supabase auth
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('You must be logged in to upload an avatar');
+        return;
+      }
+
+      // Upload to storage
+      const { url, error } = await uploadAvatar(user.id, compressedFile);
+
+      if (error || !url) {
+        alert(error || 'Failed to upload avatar');
+        return;
+      }
+
+      // Update form with new avatar URL
+      setEditForm({ ...editForm, avatarUrl: url });
+      setAvatarPreview(url);
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      alert('Failed to upload avatar');
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleAvatarUpload(file);
+    }
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleSave = async () => {
     console.log('[VolunteerDashboard] Saving changes...', editForm);
     setIsSaving(true);
@@ -559,9 +608,17 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         {/* Profile Header */}
         <div className="bg-white rounded-2xl p-4 sm:p-6 md:p-8 shadow-sm border border-slate-200 mb-6 sm:mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-12 h-12 sm:w-16 sm:h-16 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-lg sm:text-xl font-bold flex-shrink-0">
-              {currentUser.name.charAt(0)}
-            </div>
+            {currentUser.avatarUrl ? (
+              <img
+                src={currentUser.avatarUrl}
+                alt={currentUser.name}
+                className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover flex-shrink-0 border-2 border-indigo-200"
+              />
+            ) : (
+              <div className="w-12 h-12 sm:w-16 sm:h-16 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-lg sm:text-xl font-bold flex-shrink-0">
+                {currentUser.name.charAt(0)}
+              </div>
+            )}
             <div className="min-w-0">
               <h1 className="text-lg sm:text-2xl font-bold text-slate-900 truncate">Welcome, {currentUser.name}!</h1>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -990,6 +1047,68 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             </button>
             
             <h2 className="text-xl font-bold text-slate-900 mb-6">Edit Profile & Availability</h2>
+
+            {/* Avatar Upload */}
+            <div className="mb-6 p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg border border-indigo-200">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Profile Picture</h3>
+              <div className="flex flex-col items-center gap-4">
+                {/* Avatar Preview */}
+                <div className="relative">
+                  {avatarPreview || editForm.avatarUrl ? (
+                    <img
+                      src={avatarPreview || editForm.avatarUrl}
+                      alt="Avatar preview"
+                      className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-3xl font-bold border-4 border-white shadow-lg">
+                      {editForm.name.charAt(0)}
+                    </div>
+                  )}
+                  {isUploadingAvatar && (
+                    <div className="absolute inset-0 bg-black bg-opacity-50 rounded-full flex items-center justify-center">
+                      <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Upload Buttons */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={triggerFileInput}
+                    disabled={isUploadingAvatar}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    <Upload size={16} />
+                    Upload Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={triggerFileInput}
+                    disabled={isUploadingAvatar}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    <Camera size={16} />
+                    Take Photo
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 text-center">
+                  Upload a photo or take one with your camera<br/>
+                  (Max 2MB, JPG/PNG/WebP/GIF)
+                </p>
+
+                {/* Hidden File Input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  capture="user"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+              </div>
+            </div>
 
             {/* Profile Information */}
             <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
