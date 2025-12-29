@@ -662,6 +662,20 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
             </div>
 
+            {/* Volunteer Frequency */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">How often would you like to volunteer?</label>
+              <select
+                value={editForm.frequency}
+                onChange={(e) => setEditForm({...editForm, frequency: e.target.value})}
+                className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+              >
+                <option value="ONCE_A_WEEK">Once a Week</option>
+                <option value="TWICE_A_MONTH">Twice a Month</option>
+                <option value="ONCE_A_MONTH">Once a Month</option>
+              </select>
+            </div>
+
             {/* Preferred Location */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-slate-700 mb-2">Preferred Workshop Location</label>
