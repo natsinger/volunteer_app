@@ -14,6 +14,7 @@ const LoginForm: React.FC = () => {
   const [resetError, setResetError] = useState('');
   const [isSignUpMode, setIsSignUpMode] = useState(false);
   const [signUpSuccess, setSignUpSuccess] = useState(false);
+  const [fullName, setFullName] = useState('');
   const { signIn, resetPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -35,11 +36,12 @@ const LoginForm: React.FC = () => {
         setError(error.message);
         setLoading(false);
       } else if (data.user) {
-        // Add to pending_users table
+        // Add to pending_users table with name
         const { error: pendingError } = await supabase.from('pending_users').insert({
           user_id: data.user.id,
           email: data.user.email,
           provider: 'email',
+          name: fullName.trim() || null,  // Store the name provided during signup
         });
 
         if (pendingError) {
@@ -142,6 +144,7 @@ const LoginForm: React.FC = () => {
                   setIsSignUpMode(false);
                   setEmail('');
                   setPassword('');
+                  setFullName('');
                 }}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold transition-colors"
               >
@@ -156,6 +159,24 @@ const LoginForm: React.FC = () => {
                   <div className="text-sm text-red-800">{error}</div>
                 </div>
               )}
+
+            {isSignUpMode && (
+              <div>
+                <label htmlFor="fullName" className="block text-sm font-medium text-slate-700 mb-2">
+                  Full Name
+                </label>
+                <input
+                  id="fullName"
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Enter your full name"
+                  required
+                  disabled={loading}
+                />
+              </div>
+            )}
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
@@ -265,6 +286,7 @@ const LoginForm: React.FC = () => {
                 onClick={() => {
                   setIsSignUpMode(!isSignUpMode);
                   setError('');
+                  setFullName('');
                 }}
                 disabled={loading}
                 className="text-sm text-indigo-600 hover:text-indigo-800 font-medium transition-colors disabled:opacity-50"

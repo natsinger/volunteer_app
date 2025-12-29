@@ -58,6 +58,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [coworkers, setCoworkers] = useState<Volunteer[]>([]);
   const [isLoadingCoworkers, setIsLoadingCoworkers] = useState(false);
   const [selectedVolunteerProfile, setSelectedVolunteerProfile] = useState<Volunteer | null>(null);
+  // Store coworkers for each shift (shift ID -> volunteer list)
+  const [shiftCoworkers, setShiftCoworkers] = useState<Record<string, Volunteer[]>>({});
 
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
@@ -72,10 +74,70 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       const assignments = await getVolunteerAssignments(currentUser.id);
       console.log('[VolunteerDashboard] Received assignments:', assignments);
       setMyAssignments(assignments);
+
+      // Load coworkers for all shifts
+      if (assignments.length > 0) {
+        await loadAllCoworkers(assignments.map(a => a.shiftId));
+      }
     } catch (error) {
       console.error('[VolunteerDashboard] Error loading assignments:', error);
     } finally {
       setIsLoadingAssignments(false);
+    }
+  };
+
+  const loadAllCoworkers = async (shiftIds: string[]) => {
+    try {
+      // Get all assignments for these shifts
+      const assignments = await getShiftAssignments(shiftIds);
+
+      // Group assignments by shift ID
+      const assignmentsByShift: Record<string, string[]> = {};
+      assignments.forEach(assignment => {
+        if (!assignmentsByShift[assignment.shiftId]) {
+          assignmentsByShift[assignment.shiftId] = [];
+        }
+        assignmentsByShift[assignment.shiftId].push(assignment.volunteerId);
+      });
+
+      // Get all unique volunteer IDs
+      const allVolunteerIds = [...new Set(assignments.map(a => a.volunteerId))];
+
+      if (allVolunteerIds.length === 0) {
+        setShiftCoworkers({});
+        return;
+      }
+
+      // Fetch all volunteer details at once
+      const { data, error } = await supabase
+        .from('volunteers')
+        .select('*')
+        .in('id', allVolunteerIds);
+
+      if (error) {
+        console.error('Error loading all coworkers:', error);
+        return;
+      }
+
+      const volunteers = (data || []).map(mapVolunteerFromDB);
+
+      // Create a map of volunteer ID to volunteer object
+      const volunteerMap: Record<string, Volunteer> = {};
+      volunteers.forEach(v => {
+        volunteerMap[v.id] = v;
+      });
+
+      // Build the shift -> coworkers mapping
+      const coworkersByShift: Record<string, Volunteer[]> = {};
+      Object.entries(assignmentsByShift).forEach(([shiftId, volunteerIds]) => {
+        coworkersByShift[shiftId] = volunteerIds
+          .map(id => volunteerMap[id])
+          .filter(v => v !== undefined);
+      });
+
+      setShiftCoworkers(coworkersByShift);
+    } catch (error) {
+      console.error('Error loading all coworkers:', error);
     }
   };
 
@@ -476,16 +538,48 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                     r => r.shiftId === shift.id && r.requestingVolunteerId === currentUser.id && r.status === 'pending'
                   );
 
+                  const shiftTeam = shiftCoworkers[shift.id] || [];
+                  const otherVolunteers = shiftTeam.filter(v => v.id !== currentUser.id);
+
                   return (
                     <div key={shift.id} className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border-l-4 border-indigo-500 hover:shadow-md transition-shadow">
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
                         <div className="flex-1 min-w-0">
                           <h3 className="font-bold text-base sm:text-lg text-slate-900 mb-2">{shift.title}</h3>
-                          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-slate-600">
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-slate-600 mb-3">
                             <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {shift.date}</span>
                             <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Clock size={14}/> {shift.startTime} - {shift.endTime}</span>
                             {shift.location && <span className="flex items-center gap-1.5 text-xs sm:text-sm"><MapPin size={14}/> {shift.location}</span>}
                           </div>
+                          {/* Team Members Display */}
+                          {shiftTeam.length > 0 && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <Users size={14} className="text-slate-500" />
+                              <div className="flex items-center gap-1">
+                                {shiftTeam.slice(0, 4).map((volunteer, idx) => (
+                                  <div
+                                    key={volunteer.id}
+                                    className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-semibold text-indigo-700 border-2 border-white"
+                                    style={{ marginLeft: idx > 0 ? '-8px' : '0' }}
+                                    title={volunteer.name}
+                                  >
+                                    {volunteer.name.charAt(0).toUpperCase()}
+                                  </div>
+                                ))}
+                                {shiftTeam.length > 4 && (
+                                  <div
+                                    className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-xs font-semibold text-slate-600 border-2 border-white"
+                                    style={{ marginLeft: '-8px' }}
+                                  >
+                                    +{shiftTeam.length - 4}
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-xs text-slate-500 ml-1">
+                                {shiftTeam.length} volunteer{shiftTeam.length !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-row sm:flex-col gap-2 items-start sm:items-end">
                           {existingRequest ? (

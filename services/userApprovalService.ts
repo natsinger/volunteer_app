@@ -6,6 +6,8 @@ export interface PendingUser {
   email: string;
   provider: string;
   created_at: string;
+  name?: string;  // Name provided during signup
+  display_name?: string;  // Display name from OAuth providers (e.g., Google)
 }
 
 /**

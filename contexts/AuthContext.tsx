@@ -104,10 +104,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: authUser } = await supabase.auth.getUser();
       if (authUser?.user) {
         const provider = authUser.user.app_metadata?.provider || 'email';
+        const displayName = authUser.user.user_metadata?.full_name || authUser.user.user_metadata?.name;
         const { error: pendingError } = await supabase.from('pending_users').upsert({
           user_id: userId,
           email: authUser.user.email || '',
           provider: provider,
+          display_name: displayName || null,
         }, {
           onConflict: 'user_id',
           ignoreDuplicates: false
