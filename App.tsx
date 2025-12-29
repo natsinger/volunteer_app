@@ -164,18 +164,30 @@ const AppContent: React.FC = () => {
             currentUser={volunteerData}
             shifts={shifts}
             updateVolunteer={async (updatedVolunteer) => {
-              // Update in Supabase
-              const dbVolunteer = mapVolunteerToDB(updatedVolunteer);
-              const { error } = await supabase
-                .from('volunteers')
-                .update(dbVolunteer)
-                .eq('id', updatedVolunteer.id);
+              try {
+                // Update in Supabase
+                console.log('[App] Saving volunteer data:', updatedVolunteer.id);
+                const dbVolunteer = mapVolunteerToDB(updatedVolunteer);
 
-              if (!error) {
+                const { data, error } = await supabase
+                  .from('volunteers')
+                  .update(dbVolunteer)
+                  .eq('id', updatedVolunteer.id)
+                  .select()
+                  .single();
+
+                if (error) {
+                  console.error('[App] Error saving volunteer:', error);
+                  throw new Error(error.message);
+                }
+
+                console.log('[App] Save successful, refreshing data...');
                 // Refresh volunteer data from database
                 await refreshVolunteerData();
-                // Reload shifts data
-                loadData();
+                console.log('[App] Volunteer data refreshed');
+              } catch (error) {
+                console.error('[App] Failed to update volunteer:', error);
+                throw error; // Re-throw so VolunteerDashboard can catch it
               }
             }}
           />

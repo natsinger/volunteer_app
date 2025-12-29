@@ -165,10 +165,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleApproveAsVolunteer = async (userId: string, email: string) => {
-    const result = await approveUserAsVolunteer(userId, email);
+  const handleApproveAsVolunteer = async (userId: string, email: string, name?: string) => {
+    const result = await approveUserAsVolunteer(userId, email, name);
     if (result.success) {
-      alert(`${email} has been approved as a volunteer!`);
+      const displayName = name || email;
+      alert(`${displayName} has been approved as a volunteer!`);
       await loadPendingUsers(); // Refresh the list
     } else {
       alert(`Failed to approve user: ${result.error}`);
@@ -1631,8 +1632,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
                           <User size={24} className="text-purple-600" />
                         </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900">{user.email}</h3>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-semibold text-slate-900 truncate">
+                            {user.name || user.display_name || user.email}
+                          </h3>
+                          {(user.name || user.display_name) && (
+                            <p className="text-xs text-slate-500 truncate">{user.email}</p>
+                          )}
                           <p className="text-xs text-slate-500 capitalize">
                             {user.provider} account
                           </p>
@@ -1655,7 +1661,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <ShieldCheck size={16} /> <span className="hidden sm:inline">Approve as Admin</span><span className="sm:hidden">Admin</span>
                       </button>
                       <button
-                        onClick={() => handleApproveAsVolunteer(user.user_id, user.email)}
+                        onClick={() => handleApproveAsVolunteer(user.user_id, user.email, user.name || user.display_name)}
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-sm"
                       >
                         <UserCheck size={16} /> <span className="hidden sm:inline">Approve as Volunteer</span><span className="sm:hidden">Volunteer</span>
