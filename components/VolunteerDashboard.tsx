@@ -616,6 +616,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
         {/* My Shifts Tab Content */}
         {activeTab === 'my-shifts' && (
+          <>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
             {/* My Upcoming Shifts */}
@@ -819,7 +820,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             </div>
           </div>
         )}
-        </div>
+          </>
         )}
 
         {/* Monthly Schedule Tab Content */}
