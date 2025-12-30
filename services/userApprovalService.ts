@@ -79,7 +79,7 @@ export async function approveUserAsVolunteer(
         phone: '', // Will be filled in during profile completion
         role: 'NOVICE',
         skill_level: 1,
-        frequency: 'Weekly',
+        frequency: 'ONCE_A_WEEK', // Default to once a week (4 shifts/month)
         preferred_location: 'BOTH',
         availability_status: 'Active',
       });

@@ -22,9 +22,9 @@ function shuffleArray<T>(array: T[]): T[] {
 export const getMonthlyCapacity = (frequency: string): number => {
   if (!frequency) return 0;
   const freq = frequency.toUpperCase();
-  if (freq.includes('ONCE_A_WEEK')) return 4; // Approx 4 weeks in a month
+  if (freq.includes('ONCE_A_WEEK') || freq === 'WEEKLY') return 4; // Approx 4 weeks in a month
   if (freq.includes('TWICE_A_MONTH')) return 2;
-  if (freq.includes('ONCE_A_MONTH')) return 1;
+  if (freq.includes('ONCE_A_MONTH') || freq === 'MONTHLY') return 1;
   return 0; // Default or inactive
 };
 

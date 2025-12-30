@@ -1517,7 +1517,6 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                       </div>
                       <div>
                         <p className="font-medium text-slate-900">{volunteer.name}</p>
-                        <p className="text-xs text-slate-500">{volunteer.role}</p>
                       </div>
                     </div>
                     <button
@@ -1574,14 +1573,6 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 >
                   {selectedVolunteerProfile.phone}
                 </a>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-lg">
-                <div className="flex items-center gap-2 text-slate-600 mb-1">
-                  <User size={16} />
-                  <span className="text-sm font-medium">Role</span>
-                </div>
-                <p className="text-lg font-semibold text-slate-900">{selectedVolunteerProfile.role}</p>
               </div>
 
               {selectedVolunteerProfile.email && (
