@@ -70,6 +70,7 @@ export interface SavedSchedule {
   createdAt: string;
   createdBy?: string;
   notes?: string;
+  isPublished: boolean; // true when schedule is applied and visible to volunteers
 }
 
 export interface SavedScheduleAssignment {

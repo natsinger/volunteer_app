@@ -44,6 +44,37 @@ export const getShiftDayCode = (dateStr: string, timeStr: string): string => {
 };
 
 /**
+ * Get the ISO week number for a given date
+ * Used to check if two shifts are in the same week
+ */
+export const getWeekNumber = (dateStr: string): { year: number; week: number } => {
+  const date = new Date(dateStr);
+  // Get the first day of the year
+  const startOfYear = new Date(date.getFullYear(), 0, 1);
+  // Calculate the number of days since the start of the year
+  const days = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
+  // Calculate the week number
+  const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
+  return { year: date.getFullYear(), week: weekNumber };
+};
+
+/**
+ * Check if two dates are in the same week
+ */
+export const areDatesInSameWeek = (date1: string, date2: string): boolean => {
+  const week1 = getWeekNumber(date1);
+  const week2 = getWeekNumber(date2);
+  return week1.year === week2.year && week1.week === week2.week;
+};
+
+/**
+ * Check if two dates are on the same day
+ */
+export const areDatesOnSameDay = (date1: string, date2: string): boolean => {
+  return date1 === date2;
+};
+
+/**
  * Check if a volunteer can work a specific shift based on availability preferences
  * This checks: location, day preference, blackout dates, and only dates
  * Note: This does NOT check capacity - that should be checked separately
@@ -151,6 +182,10 @@ function scheduleShiftsMultiPass(
   const shiftAssignments = new Map<string, string[]>();
   shifts.forEach(s => shiftAssignments.set(s.id, []));
 
+  // Track which dates each volunteer is assigned to (for same-day/same-week checks)
+  const volunteerAssignedDates = new Map<string, string[]>();
+  volunteers.forEach(v => volunteerAssignedDates.set(v.id, []));
+
   // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
   // Within same skill level, sort by capacity (higher capacity first) or randomize
   let sortedVolunteers: Volunteer[];
@@ -201,12 +236,27 @@ function scheduleShiftsMultiPass(
     const dayCode = getShiftDayCode(shift.date, shift.startTime);
     if (!volunteer.preferredDays.includes(dayCode)) return false;
 
-    // Check blackout dates
+    // Check blackout dates (blocked days)
     if (volunteer.blackoutDates.includes(shift.date)) return false;
 
     // Check only dates
     if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
       return false;
+    }
+
+    // Get volunteer's already assigned dates
+    const assignedDates = volunteerAssignedDates.get(volunteer.id) || [];
+
+    // NEW CONSTRAINT: Can't have two shifts on the same day (even at different locations)
+    if (assignedDates.includes(shift.date)) {
+      return false;
+    }
+
+    // NEW CONSTRAINT: Can't have two shifts in the same week
+    for (const assignedDate of assignedDates) {
+      if (areDatesInSameWeek(assignedDate, shift.date)) {
+        return false;
+      }
     }
 
     return true;
@@ -286,6 +336,11 @@ function scheduleShiftsMultiPass(
         shiftAssignments.set(shift.id, currentAssignees);
         capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
         assignmentsMade = true;
+
+        // Track assigned date for same-day/same-week constraint checks
+        const currentAssignedDates = volunteerAssignedDates.get(volunteer.id) || [];
+        currentAssignedDates.push(shift.date);
+        volunteerAssignedDates.set(volunteer.id, currentAssignedDates);
 
         // For passes 1-2, prioritize breadth (3 volunteers per shift)
         // After that, continue adding to utilize all capacity
@@ -377,6 +432,21 @@ function scheduleShiftsMultiPass(
   return assignments;
 }
 
+/**
+ * Filter blackout dates to only include dates in the target month
+ * This ensures old/irrelevant blackout dates don't affect scheduling
+ */
+const filterRelevantBlackoutDates = (
+  blackoutDates: string[],
+  targetMonth: number,
+  targetYear: number
+): string[] => {
+  return blackoutDates.filter(dateStr => {
+    const date = new Date(dateStr);
+    return date.getMonth() + 1 === targetMonth && date.getFullYear() === targetYear;
+  });
+};
+
 export const generateScheduleAI = async (
   volunteers: Volunteer[],
   shifts: Shift[],
@@ -390,6 +460,19 @@ export const generateScheduleAI = async (
 
   // Filter only active volunteers
   const activeVolunteers = volunteers.filter(v => v.availabilityStatus === 'Active');
+
+  // Pre-process volunteers: filter blackout dates to only include relevant dates for the target month
+  const processedVolunteers = activeVolunteers.map(v => ({
+    ...v,
+    blackoutDates: filterRelevantBlackoutDates(v.blackoutDates, targetMonth, targetYear)
+  }));
+
+  console.log('\n[Pre-scheduling] Validating blocked days for target month:');
+  processedVolunteers.forEach(v => {
+    if (v.blackoutDates.length > 0) {
+      console.log(`  ${v.name}: ${v.blackoutDates.length} blocked days in ${targetMonth}/${targetYear}`);
+    }
+  });
 
   // Filter open shifts SPECIFICALLY for the target month and year
   const targetShifts = shifts.filter(s => {
@@ -408,11 +491,12 @@ export const generateScheduleAI = async (
   }
 
   console.log(`\n🔄 Starting ${randomize ? 'RANDOMIZED' : 'deterministic'} scheduling:`);
-  console.log(`  Volunteers: ${activeVolunteers.length} active`);
+  console.log(`  Volunteers: ${processedVolunteers.length} active`);
   console.log(`  Shifts: ${targetShifts.length} open shifts`);
 
   // Use multi-pass algorithm with optional randomization
-  const validAssignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts, randomize);
+  // Using processedVolunteers which has filtered blackout dates for the target month
+  const validAssignments = scheduleShiftsMultiPass(processedVolunteers, targetShifts, randomize);
 
   console.log(`\n✅ Scheduling complete: ${validAssignments.length} assignments created`);
 
@@ -446,6 +530,12 @@ export const generateMultipleScheduleOptions = async (
   // Filter only active volunteers
   const activeVolunteers = volunteers.filter(v => v.availabilityStatus === 'Active');
 
+  // Pre-process volunteers: filter blackout dates to only include relevant dates for the target month
+  const processedVolunteers = activeVolunteers.map(v => ({
+    ...v,
+    blackoutDates: filterRelevantBlackoutDates(v.blackoutDates, targetMonth, targetYear)
+  }));
+
   // Filter open shifts for the target month
   const targetShifts = shifts.filter(s => {
     const d = new Date(s.date);
@@ -454,7 +544,7 @@ export const generateMultipleScheduleOptions = async (
            d.getFullYear() === targetYear;
   });
 
-  if (activeVolunteers.length === 0) {
+  if (processedVolunteers.length === 0) {
     throw new Error("No active volunteers found.");
   }
 
@@ -467,11 +557,12 @@ export const generateMultipleScheduleOptions = async (
   for (let i = 0; i < numberOfOptions; i++) {
     console.log(`\n--- Option ${i + 1} ---`);
     // Use randomization for all options to get different results
-    const assignments = scheduleShiftsMultiPass(activeVolunteers, targetShifts, true);
+    // Using processedVolunteers which has filtered blackout dates for the target month
+    const assignments = scheduleShiftsMultiPass(processedVolunteers, targetShifts, true);
 
     // Calculate statistics
     const capacityMap = new Map<string, number>();
-    activeVolunteers.forEach(v => {
+    processedVolunteers.forEach(v => {
       capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
     });
 

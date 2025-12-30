@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
-import { loadSavedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
+import { loadPublishedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
@@ -185,8 +185,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const loadMonthlySchedules = async () => {
     setIsLoadingSchedule(true);
     try {
-      // Load all saved schedules
-      const result = await loadSavedSchedules();
+      // Load only published schedules (visible after Apply to Database)
+      const result = await loadPublishedSchedules();
       if (result.success && result.schedules) {
         // Sort by date (most recent first)
         const sorted = result.schedules.sort((a, b) => {
@@ -773,7 +773,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <p className="text-sm">You have no shifts assigned for the next month. Contact the workshop manager if you think this is an error.</p>
               </div>
             ) : (
-              <div className="space-y-3 sm:space-y-4">
+              <div className="space-y-3 sm:space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                 {myShifts.map(shift => {
                   // Check if there's already a pending switch request for this shift
                   const existingRequest = switchRequests.find(
@@ -1012,7 +1012,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   {scheduleShifts.length === 0 ? (
                     <p className="text-slate-500 text-center py-4">No shifts in this schedule</p>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
                       {scheduleShifts.map(shift => {
                         // Check if this shift is assigned to current user
                         const isMyShift = scheduleAssignments.some(
