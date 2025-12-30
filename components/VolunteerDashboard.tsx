@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { isGoogleUser, addShiftsToGoogleCalendar } from '../lib/googleCalendar';
+import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -788,7 +789,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                         <div className="flex-1 min-w-0">
                           <h3 className="font-bold text-base sm:text-lg text-slate-900 mb-2">{shift.title}</h3>
                           <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-slate-600 mb-3">
-                            <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {shift.date}</span>
+                            <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {formatDateDDMMYYYY(shift.date)}</span>
                             <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Clock size={14}/> {shift.startTime} - {shift.endTime}</span>
                             {shift.location && <span className="flex items-center gap-1.5 text-xs sm:text-sm"><MapPin size={14}/> {shift.location}</span>}
                           </div>
@@ -902,7 +903,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                     <div className="flex items-start justify-between mb-3">
                       <div>
                         <h4 className="font-semibold text-slate-900">{shift.title}</h4>
-                        <p className="text-sm text-slate-500 mt-1">{shift.date} • {shift.startTime} - {shift.endTime}</p>
+                        <p className="text-sm text-slate-500 mt-1">{formatDateDDMMYYYY(shift.date)} • {shift.startTime} - {shift.endTime}</p>
                         {shift.location && <p className="text-xs text-slate-400 mt-1">{shift.location}</p>}
                       </div>
                       <span className="bg-amber-50 text-amber-700 text-xs px-2 py-1 rounded-full font-medium">
@@ -966,10 +967,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 >
                   {monthlySchedules.map(schedule => (
                     <option key={schedule.id} value={schedule.id}>
-                      {new Date(schedule.targetYear, schedule.targetMonth - 1).toLocaleDateString('en-US', {
-                        month: 'long',
-                        year: 'numeric'
-                      })} - {schedule.name}
+                      {formatMonthYear(schedule.targetMonth, schedule.targetYear)} - {schedule.name}
                     </option>
                   ))}
                 </select>
@@ -994,16 +992,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                   <h2 className="text-xl font-bold text-slate-900 mb-2">{selectedSchedule.name}</h2>
                   <p className="text-slate-600 mb-1">
-                    {new Date(selectedSchedule.targetYear, selectedSchedule.targetMonth - 1).toLocaleDateString('en-US', {
-                      month: 'long',
-                      year: 'numeric'
-                    })}
+                    {formatMonthYear(selectedSchedule.targetMonth, selectedSchedule.targetYear)}
                   </p>
                   {selectedSchedule.notes && (
                     <p className="text-sm text-slate-500 mt-3 p-3 bg-slate-50 rounded-lg">{selectedSchedule.notes}</p>
                   )}
                   <p className="text-xs text-slate-400 mt-3">
-                    Published {new Date(selectedSchedule.createdAt).toLocaleDateString()}
+                    Published {formatDateDDMMYYYY(selectedSchedule.createdAt)}
                   </p>
                 </div>
 
@@ -1046,7 +1041,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                 </div>
                                 <div className="flex flex-wrap items-center gap-3 text-slate-600 text-sm mb-2">
                                   <span className="flex items-center gap-1.5">
-                                    <Calendar size={14}/> {shift.date}
+                                    <Calendar size={14}/> {formatDateDDMMYYYY(shift.date)}
                                   </span>
                                   <span className="flex items-center gap-1.5">
                                     <Clock size={14}/> {shift.startTime} - {shift.endTime}
@@ -1365,7 +1360,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <p className="text-xs sm:text-sm text-slate-600 mb-2">You want to switch from:</p>
               <h3 className="font-bold text-base sm:text-lg text-slate-900">{switchRequestShift.title}</h3>
               <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-2 text-slate-600">
-                <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {switchRequestShift.date}</span>
+                <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {formatDateDDMMYYYY(switchRequestShift.date)}</span>
                 <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Clock size={14}/> {switchRequestShift.startTime} - {switchRequestShift.endTime}</span>
                 {switchRequestShift.location && <span className="flex items-center gap-1.5 text-xs sm:text-sm"><MapPin size={14}/> {switchRequestShift.location}</span>}
               </div>
@@ -1415,7 +1410,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                           <h4 className="font-semibold text-sm sm:text-base text-slate-900">{shift.title}</h4>
                           <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1 text-xs sm:text-sm text-slate-600">
                             <span className="flex items-center gap-1">
-                              <Calendar size={12}/> {shift.date}
+                              <Calendar size={12}/> {formatDateDDMMYYYY(shift.date)}
                             </span>
                             <span className="flex items-center gap-1">
                               <Clock size={12}/> {shift.startTime} - {shift.endTime}
@@ -1483,7 +1478,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <p className="font-bold text-slate-900">{coworkersShift.title}</p>
               <div className="flex flex-wrap items-center gap-3 mt-2 text-slate-600">
                 <span className="flex items-center gap-1.5 text-sm">
-                  <Calendar size={14}/> {coworkersShift.date}
+                  <Calendar size={14}/> {formatDateDDMMYYYY(coworkersShift.date)}
                 </span>
                 <span className="flex items-center gap-1.5 text-sm">
                   <Clock size={14}/> {coworkersShift.startTime} - {coworkersShift.endTime}
