@@ -655,7 +655,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       targetMonth,
       targetYear,
       generatedAssignments,
-      scheduleNotesInput
+      scheduleNotesInput,
+      assignmentsApplied // Schedule is published only if assignments were applied
     );
 
     if (result.success && result.scheduleId) {

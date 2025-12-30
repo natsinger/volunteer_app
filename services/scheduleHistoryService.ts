@@ -10,6 +10,7 @@ const mapSavedScheduleFromDB = (dbSchedule: any): SavedSchedule => ({
   createdAt: dbSchedule.created_at,
   createdBy: dbSchedule.created_by,
   notes: dbSchedule.notes,
+  isPublished: dbSchedule.is_published ?? false,
 });
 
 const mapSavedScheduleToDB = (schedule: Partial<SavedSchedule>) => ({
@@ -20,6 +21,7 @@ const mapSavedScheduleToDB = (schedule: Partial<SavedSchedule>) => ({
   created_at: schedule.createdAt,
   created_by: schedule.createdBy,
   notes: schedule.notes,
+  is_published: schedule.isPublished ?? false,
 });
 
 const mapSavedAssignmentFromDB = (dbAssignment: any): SavedScheduleAssignment => ({
@@ -40,13 +42,15 @@ const mapSavedAssignmentToDB = (assignment: Partial<SavedScheduleAssignment>) =>
 
 /**
  * Save a schedule with its assignments to the database
+ * @param isPublished - When true, the schedule will be visible to volunteers (set to true after Apply to Database)
  */
 export const saveSchedule = async (
   name: string,
   targetMonth: number,
   targetYear: number,
   assignments: { shiftId: string; volunteerId: string }[],
-  notes?: string
+  notes?: string,
+  isPublished: boolean = false
 ): Promise<{ success: boolean; scheduleId?: string; error?: string }> => {
   try {
     // Insert the schedule metadata
@@ -58,6 +62,7 @@ export const saveSchedule = async (
           target_month: targetMonth,
           target_year: targetYear,
           notes,
+          is_published: isPublished,
           created_at: new Date().toISOString(),
         },
       ])
@@ -98,7 +103,7 @@ export const saveSchedule = async (
 };
 
 /**
- * Load all saved schedules
+ * Load all saved schedules (for admins)
  */
 export const loadSavedSchedules = async (): Promise<{
   success: boolean;
@@ -120,6 +125,35 @@ export const loadSavedSchedules = async (): Promise<{
     return { success: true, schedules };
   } catch (error: any) {
     console.error('Unexpected error loading saved schedules:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+};
+
+/**
+ * Load only published schedules (for volunteers)
+ * Only returns schedules where is_published = true
+ */
+export const loadPublishedSchedules = async (): Promise<{
+  success: boolean;
+  schedules?: SavedSchedule[];
+  error?: string;
+}> => {
+  try {
+    const { data, error } = await supabase
+      .from('saved_schedules')
+      .select('*')
+      .eq('is_published', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading published schedules:', error);
+      return { success: false, error: error.message };
+    }
+
+    const schedules = (data || []).map(mapSavedScheduleFromDB);
+    return { success: true, schedules };
+  } catch (error: any) {
+    console.error('Unexpected error loading published schedules:', error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 };
