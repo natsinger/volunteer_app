@@ -22,7 +22,8 @@ const DAYS = [
   { id: '2_evening', label: 'Tuesday Evening' },
   { id: '3', label: 'Wednesday' },
   { id: '4', label: 'Thursday' },
-  { id: '5', label: 'Friday' },
+  { id: '5_opening', label: 'Friday (Opening)' },
+  { id: '5_closing', label: 'Friday (Closing)' },
   { id: '6', label: 'Saturday' },
 ];
 
@@ -31,6 +32,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [editForm, setEditForm] = useState<Volunteer>(currentUser);
   const [newBlackoutDate, setNewBlackoutDate] = useState('');
   const [newBlackoutEndDate, setNewBlackoutEndDate] = useState('');
+  const [newOnlyDate, setNewOnlyDate] = useState('');
+  const [newOnlyEndDate, setNewOnlyEndDate] = useState('');
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -652,6 +655,57 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     setEditForm({
       ...editForm,
       blackoutDates: editForm.blackoutDates.filter(d => d !== date)
+    });
+  };
+
+  // Functions for "Only Dates" - days the volunteer CAN come
+  const addOnlyDate = () => {
+    if (!newOnlyDate) return;
+
+    const datesToAdd: string[] = [];
+
+    // If end date is specified, add all dates in range
+    if (newOnlyEndDate && newOnlyEndDate >= newOnlyDate) {
+      const startDate = new Date(newOnlyDate);
+      const endDate = new Date(newOnlyEndDate);
+
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!editForm.onlyDates.includes(dateStr)) {
+          datesToAdd.push(dateStr);
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    } else {
+      // Single date
+      if (!editForm.onlyDates.includes(newOnlyDate)) {
+        datesToAdd.push(newOnlyDate);
+      }
+    }
+
+    if (datesToAdd.length > 0) {
+      setEditForm({
+        ...editForm,
+        onlyDates: [...editForm.onlyDates, ...datesToAdd].sort()
+      });
+    }
+
+    setNewOnlyDate('');
+    setNewOnlyEndDate('');
+  };
+
+  const removeOnlyDate = (date: string) => {
+    setEditForm({
+      ...editForm,
+      onlyDates: editForm.onlyDates.filter(d => d !== date)
+    });
+  };
+
+  const clearAllOnlyDates = () => {
+    setEditForm({
+      ...editForm,
+      onlyDates: []
     });
   };
 
@@ -1356,10 +1410,10 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
             </div>
 
-            {/* Blackout Dates */}
+            {/* Blackout Dates - Days I can't volunteer */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-slate-700 mb-2">Unavailable Dates (Blackout)</label>
-              <p className="text-xs text-slate-500 mb-2">Select a single date or a date range</p>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Days I can't volunteer</label>
+              <p className="text-xs text-slate-500 mb-2">Select specific dates when you are unavailable</p>
               <div className="space-y-2 mb-3">
                 <div className="flex gap-2 items-center">
                   <input
@@ -1401,6 +1455,68 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 ))}
                 {editForm.blackoutDates.length === 0 && (
                   <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                )}
+              </div>
+            </div>
+
+            {/* Only Dates - Days I CAN come */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-slate-700">Days I CAN come</label>
+                {editForm.onlyDates.length > 0 && (
+                  <button
+                    onClick={clearAllOnlyDates}
+                    className="text-xs text-slate-500 hover:text-red-600 transition-colors"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mb-2">
+                If you set specific dates here, you will <strong>only</strong> be scheduled on these dates.
+                Leave empty to be available on all your preferred days.
+              </p>
+              <div className="space-y-2 mb-3">
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="date"
+                    className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                    value={newOnlyDate}
+                    onChange={(e) => setNewOnlyDate(e.target.value)}
+                    min={getDefaultMinDate()}
+                    placeholder="Start date"
+                  />
+                  <span className="text-slate-400 text-sm">to</span>
+                  <input
+                    type="date"
+                    className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                    value={newOnlyEndDate}
+                    onChange={(e) => setNewOnlyEndDate(e.target.value)}
+                    min={newOnlyDate || getDefaultMinDate()}
+                    placeholder="End date (optional)"
+                  />
+                  <button
+                    onClick={addOnlyDate}
+                    disabled={!newOnlyDate}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                  >
+                    <Plus size={18} />
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {editForm.onlyDates.map(date => (
+                  <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md text-sm">
+                    {date}
+                    <button onClick={() => removeOnlyDate(date)} className="hover:bg-emerald-100 rounded p-0.5">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                {editForm.onlyDates.length === 0 && (
+                  <span className="text-slate-400 text-sm italic">Available on all preferred days (no restrictions)</span>
                 )}
               </div>
             </div>

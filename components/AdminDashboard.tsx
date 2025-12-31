@@ -30,7 +30,9 @@ const DAYS = [
   { id: '2_evening', label: 'Tue (PM)' },
   { id: '3', label: 'Wed' },
   { id: '4', label: 'Thu' },
-  { id: '5', label: 'Fri' },
+  { id: '5_opening', label: 'Fri (Open)' },
+  { id: '5_closing', label: 'Fri (Close)' },
+  { id: '6', label: 'Sat' },
 ];
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
