@@ -773,7 +773,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <p className="text-sm">You have no shifts assigned for the next month. Contact the workshop manager if you think this is an error.</p>
               </div>
             ) : (
-              <div className="space-y-3 sm:space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+              <div className="space-y-3 sm:space-y-4">
                 {myShifts.map(shift => {
                   // Check if there's already a pending switch request for this shift
                   const existingRequest = switchRequests.find(
@@ -866,18 +866,51 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
           </div>
 
           {/* Sidebar Stats & Info */}
-          <div className="space-y-6">
+          <div className="space-y-6 lg:sticky lg:top-6">
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="font-semibold text-slate-900 mb-4">My Stats</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center pb-3 border-b border-slate-50">
-                  <span className="text-slate-500">Shifts Completed</span>
-                  <span className="font-bold text-slate-900">12</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500">Hours This Month</span>
-                  <span className="font-bold text-slate-900">24</span>
-                </div>
+              <h3 className="font-semibold text-slate-900 mb-4">Upcoming Shifts</h3>
+              <div className="space-y-3">
+                {(() => {
+                  // Group shifts by month
+                  const shiftsByMonth = myShifts.reduce((acc, shift) => {
+                    const date = new Date(shift.date);
+                    const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+                    const monthName = date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+                    if (!acc[monthKey]) {
+                      acc[monthKey] = { name: monthName, count: 0, date };
+                    }
+                    acc[monthKey].count++;
+                    return acc;
+                  }, {} as Record<string, { name: string; count: number; date: Date }>);
+
+                  const sortedMonths = Object.values(shiftsByMonth).sort((a, b) => a.date.getTime() - b.date.getTime());
+
+                  // Get next 3 months to show (including current)
+                  const now = new Date();
+                  const monthsToShow = [];
+                  for (let i = 0; i < 3; i++) {
+                    const targetDate = new Date(now.getFullYear(), now.getMonth() + i, 1);
+                    const monthKey = `${targetDate.getFullYear()}-${targetDate.getMonth()}`;
+                    const monthName = targetDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+                    const existing = shiftsByMonth[monthKey];
+                    monthsToShow.push({
+                      name: monthName,
+                      count: existing?.count || 0,
+                      isAssigned: !!existing
+                    });
+                  }
+
+                  return monthsToShow.map((month, idx) => (
+                    <div key={idx} className="flex justify-between items-center py-2 border-b border-slate-100 last:border-b-0">
+                      <span className="text-slate-600 text-sm">{month.name}</span>
+                      {month.count > 0 ? (
+                        <span className="font-bold text-indigo-600">{month.count} shift{month.count !== 1 ? 's' : ''}</span>
+                      ) : (
+                        <span className="text-xs text-slate-400 italic">Not assigned yet</span>
+                      )}
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
           </div>
@@ -1012,7 +1045,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   {scheduleShifts.length === 0 ? (
                     <p className="text-slate-500 text-center py-4">No shifts in this schedule</p>
                   ) : (
-                    <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+                    <div className="space-y-3">
                       {scheduleShifts.map(shift => {
                         // Check if this shift is assigned to current user
                         const isMyShift = scheduleAssignments.some(

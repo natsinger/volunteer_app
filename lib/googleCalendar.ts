@@ -21,16 +21,36 @@ export const isGoogleUser = async (): Promise<boolean> => {
 /**
  * Get the user's Google access token from Supabase session
  */
-const getGoogleAccessToken = async (): Promise<string | null> => {
+const getGoogleAccessToken = async (): Promise<{ token: string | null; error?: string }> => {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-    // Google OAuth token is stored in the session
-    return session.provider_token || null;
-  } catch (error) {
-    console.error('Error getting Google access token:', error);
-    return null;
+    if (sessionError) {
+      console.error('[GoogleCalendar] Session error:', sessionError);
+      return { token: null, error: `Session error: ${sessionError.message}` };
+    }
+
+    if (!session) {
+      console.log('[GoogleCalendar] No session found');
+      return { token: null, error: 'No active session. Please sign in again.' };
+    }
+
+    console.log('[GoogleCalendar] Session found, provider:', session.user?.app_metadata?.provider);
+    console.log('[GoogleCalendar] Provider token exists:', !!session.provider_token);
+    console.log('[GoogleCalendar] Provider refresh token exists:', !!session.provider_refresh_token);
+
+    if (!session.provider_token) {
+      console.log('[GoogleCalendar] No provider token. User may need to re-authenticate with calendar scope.');
+      return {
+        token: null,
+        error: 'No Google Calendar access. Please sign out and sign in again with Google, granting calendar permissions.'
+      };
+    }
+
+    return { token: session.provider_token };
+  } catch (error: any) {
+    console.error('[GoogleCalendar] Error getting access token:', error);
+    return { token: null, error: error.message || 'Failed to get access token' };
   }
 };
 
@@ -45,11 +65,13 @@ export const addShiftToGoogleCalendar = async (
   location?: string
 ): Promise<{ success: boolean; error?: string }> => {
   try {
-    const accessToken = await getGoogleAccessToken();
+    console.log('[GoogleCalendar] Adding shift to calendar:', shift.title, shift.date);
+    const { token: accessToken, error: tokenError } = await getGoogleAccessToken();
     if (!accessToken) {
+      console.error('[GoogleCalendar] No access token:', tokenError);
       return {
         success: false,
-        error: 'No Google access token found. Please sign in with Google to use calendar sync.'
+        error: tokenError || 'No Google access token found. Please sign in with Google to use calendar sync.'
       };
     }
 
@@ -89,6 +111,7 @@ export const addShiftToGoogleCalendar = async (
     };
 
     // Add to Google Calendar via API
+    console.log('[GoogleCalendar] Sending request to Google Calendar API...');
     const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
       method: 'POST',
       headers: {
@@ -98,17 +121,25 @@ export const addShiftToGoogleCalendar = async (
       body: JSON.stringify(event),
     });
 
+    console.log('[GoogleCalendar] API response status:', response.status);
+
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('Google Calendar API error:', errorData);
-      return {
-        success: false,
-        error: errorData.error?.message || 'Failed to add event to calendar'
-      };
+      console.error('[GoogleCalendar] API error:', errorData);
+
+      // Provide more helpful error messages
+      let errorMessage = errorData.error?.message || 'Failed to add event to calendar';
+      if (response.status === 401) {
+        errorMessage = 'Google Calendar access expired. Please sign out and sign in again with Google.';
+      } else if (response.status === 403) {
+        errorMessage = 'Calendar permission denied. Please sign out and sign in again with Google, granting calendar access.';
+      }
+
+      return { success: false, error: errorMessage };
     }
 
     const data = await response.json();
-    console.log('Event added to Google Calendar:', data.htmlLink);
+    console.log('[GoogleCalendar] Event added successfully:', data.htmlLink);
 
     return { success: true };
   } catch (error: any) {
