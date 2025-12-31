@@ -25,12 +25,15 @@ interface AdminDashboardProps {
 
 const DAYS = [
   { id: '0', label: 'Sun' },
-  { id: '1', label: 'Mon' },
+  { id: '1_morning', label: 'Mon (09-12)' },
+  { id: '1_afternoon', label: 'Mon (11-14)' },
   { id: '2_morning', label: 'Tue (AM)' },
   { id: '2_evening', label: 'Tue (PM)' },
   { id: '3', label: 'Wed' },
   { id: '4', label: 'Thu' },
-  { id: '5', label: 'Fri' },
+  { id: '5_opening', label: 'Fri (Open)' },
+  { id: '5_closing', label: 'Fri (Close)' },
+  { id: '6', label: 'Sat' },
 ];
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({

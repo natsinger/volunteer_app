@@ -28,16 +28,28 @@ export const getMonthlyCapacity = (frequency: string): number => {
   return 0; // Default or inactive
 };
 
-// Helper to get the specific day code (0, 1, 2_morning, 2_evening, etc.)
+// Helper to get the specific day code (0, 1_morning, 1_afternoon, 2_morning, 2_evening, 5_opening, 5_closing, etc.)
 export const getShiftDayCode = (dateStr: string, timeStr: string): string => {
   const date = new Date(dateStr);
   const day = date.getDay(); // 0 = Sunday
+  const hour = parseInt(timeStr.split(':')[0], 10);
 
-  // Specific logic for Tuesday (Day 2) splits
+  // Monday (Day 1) splits: 09:00-12:00 = morning, 11:00-14:00 = afternoon
+  if (day === 1) {
+    // Before 11:00 = morning slot, 11:00+ = afternoon slot
+    return hour < 11 ? '1_morning' : '1_afternoon';
+  }
+
+  // Tuesday (Day 2) splits: morning vs evening
   if (day === 2) {
-    const hour = parseInt(timeStr.split(':')[0], 10);
-    // Assuming evening starts after 16:00 (4 PM)
+    // Before 16:00 = morning, 16:00+ = evening
     return hour < 16 ? '2_morning' : '2_evening';
+  }
+
+  // Friday (Day 5) splits: opening vs closing
+  if (day === 5) {
+    // Before 14:00 = opening shift, 14:00+ = closing shift
+    return hour < 14 ? '5_opening' : '5_closing';
   }
 
   return day.toString();
@@ -631,7 +643,7 @@ export const parseBulkUploadAI = async (rawData: string): Promise<Partial<Volunt
       - skillLevel (1, 2, or 3) - Default to 1 if unknown or novice, 3 if expert.
       - frequency (ONCE_A_WEEK, TWICE_A_MONTH, etc)
       - preferredLocation (HATACHANA, DIZENGOFF, BOTH)
-      - preferredDays (array of strings like "0", "1", "2_morning", "5")
+      - preferredDays (array of strings like "0", "1_morning", "1_afternoon", "2_morning", "2_evening", "5_opening", "5_closing", "6")
       - blackoutDates (array of YYYY-MM-DD)
       - onlyDates (array of YYYY-MM-DD)
       - serialNumber (number)
