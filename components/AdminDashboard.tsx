@@ -604,9 +604,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     setIsApplyingAssignments(true);
     try {
-      // First, clear existing assignments for this month's shifts to avoid duplicates
-      const shiftIds = displayedShifts.map(s => s.id);
-      const clearResult = await clearMonthAssignments(shiftIds);
+      // Get ALL shift IDs that will be affected (from both displayed shifts and assignments)
+      const displayedShiftIds = new Set(displayedShifts.map(s => s.id));
+      const assignmentShiftIds = new Set(generatedAssignments.map(a => a.shiftId));
+      const allShiftIds = [...new Set([...displayedShiftIds, ...assignmentShiftIds])];
+
+      console.log('[AdminDashboard] Applying assignments');
+      console.log('[AdminDashboard] Displayed shifts:', displayedShiftIds.size);
+      console.log('[AdminDashboard] Assignment shifts:', assignmentShiftIds.size);
+      console.log('[AdminDashboard] Total unique shifts to clear:', allShiftIds.length);
+
+      // First, clear existing assignments for all these shifts to avoid duplicates
+      const clearResult = await clearMonthAssignments(allShiftIds);
 
       if (!clearResult.success) {
         alert(`Failed to clear existing assignments: ${clearResult.error}`);
@@ -614,11 +623,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         return;
       }
 
+      console.log('[AdminDashboard] Cleared', clearResult.deletedCount, 'existing assignments');
+
       // Now apply the new assignments
       const result = await applyScheduleAssignments(generatedAssignments);
 
       if (result.success) {
-        alert('Assignments applied successfully! Volunteers can now see their shifts.');
+        alert(`Assignments applied successfully!\n\nCleared ${clearResult.deletedCount || 0} old assignment(s)\nApplied ${generatedAssignments.length} new assignment(s)\n\nVolunteers can now see their shifts.`);
         setAssignmentsApplied(true);
       } else {
         alert(`Failed to apply assignments: ${result.error}`);
@@ -635,16 +646,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleClearAssignments = async () => {
     const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
 
-    if (!confirm(`Clear ALL volunteer assignments for ${monthName} ${targetYear}?\n\nThis will:\n• Remove all volunteer shift assignments from the database\n• Volunteers will no longer see these shifts\n• Saved schedules in history will NOT be deleted\n\nThis action cannot be undone.`)) {
+    if (!confirm(`Clear ALL volunteer assignments for ${monthName} ${targetYear}?\n\nThis will:\n• Remove all volunteer shift assignments from the database\n• Volunteers will no longer see these shifts\n• Saved schedules in history will NOT be deleted\n• Current view will be cleared\n\nThis action cannot be undone.`)) {
       return;
     }
 
     try {
-      // Clear shift assignments from database (this is what volunteers see)
-      const shiftIds = displayedShifts.map(s => s.id);
-      console.log('[AdminDashboard] Clearing assignments for shift IDs:', shiftIds);
+      // Get ALL shift IDs (from both displayed shifts and any loaded assignments)
+      const displayedShiftIds = new Set(displayedShifts.map(s => s.id));
+      const assignmentShiftIds = new Set(generatedAssignments.map(a => a.shiftId));
+      const allShiftIds = [...new Set([...displayedShiftIds, ...assignmentShiftIds])];
 
-      const clearResult = await clearMonthAssignments(shiftIds);
+      console.log('[AdminDashboard] Clearing assignments');
+      console.log('[AdminDashboard] Displayed shifts:', displayedShiftIds.size);
+      console.log('[AdminDashboard] Assignment shifts:', assignmentShiftIds.size);
+      console.log('[AdminDashboard] Total unique shifts to clear:', allShiftIds.length);
+
+      const clearResult = await clearMonthAssignments(allShiftIds);
       console.log('[AdminDashboard] Clear result:', clearResult);
 
       if (!clearResult.success) {
