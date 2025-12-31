@@ -119,9 +119,10 @@ const AppContent: React.FC = () => {
   if (userRole === 'volunteer' && needsProfileCompletion) {
     return (
       <VolunteerWelcome
-        onComplete={(updatedVolunteer) => {
-          setNeedsProfileCompletion(false);
-          // Reload data after profile completion
+        onComplete={async (updatedVolunteer) => {
+          // Refresh volunteer data in context (this fetches fresh data and updates needsProfileCompletion)
+          await refreshVolunteerData();
+          // Then load dashboard data
           loadData();
         }}
       />

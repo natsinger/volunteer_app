@@ -6,7 +6,7 @@ import { mapVolunteerFromDB } from '../lib/mappers';
 import { Volunteer } from '../types';
 
 interface VolunteerWelcomeProps {
-  onComplete: (volunteer: Volunteer) => void;
+  onComplete: (volunteer: Volunteer) => void | Promise<void>;
 }
 
 const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
@@ -114,7 +114,7 @@ const VolunteerWelcome: React.FC<VolunteerWelcomeProps> = ({ onComplete }) => {
         if (updateError) throw updateError;
 
         const updatedVolunteer = mapVolunteerFromDB(data);
-        onComplete(updatedVolunteer);
+        await onComplete(updatedVolunteer);
       } else {
         // This shouldn't happen as admin should create the volunteer first
         setError('No volunteer record found. Please contact the administrator.');
