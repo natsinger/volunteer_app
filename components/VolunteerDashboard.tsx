@@ -1031,109 +1031,156 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             ) : (
               <div className="space-y-4">
                 {/* Schedule Header */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                  <h2 className="text-xl font-bold text-slate-900 mb-2">{selectedSchedule.name}</h2>
-                  <p className="text-slate-600 mb-1">
-                    {formatMonthYear(selectedSchedule.targetMonth, selectedSchedule.targetYear)}
-                  </p>
-                  {selectedSchedule.notes && (
-                    <p className="text-sm text-slate-500 mt-3 p-3 bg-slate-50 rounded-lg">{selectedSchedule.notes}</p>
-                  )}
-                  <p className="text-xs text-slate-400 mt-3">
-                    Published {formatDateDDMMYYYY(selectedSchedule.createdAt)}
-                  </p>
+                <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900 mb-1">{selectedSchedule.name}</h2>
+                      <p className="text-slate-600">
+                        {formatMonthYear(selectedSchedule.targetMonth, selectedSchedule.targetYear)}
+                      </p>
+                      {selectedSchedule.notes && (
+                        <p className="text-sm text-slate-500 mt-2 p-2 bg-slate-50 rounded-lg">{selectedSchedule.notes}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded bg-blue-500"></span>
+                        <span>Hatachana</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded bg-orange-500"></span>
+                        <span>Dizengoff</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded bg-purple-500"></span>
+                        <span>Both</span>
+                      </div>
+                      <div className="w-px h-4 bg-slate-300"></div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded bg-indigo-600"></span>
+                        <span>Your Shift</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {/* All Shifts in Schedule */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                  <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Calendar className="text-indigo-600" size={20} />
-                    All Shifts ({scheduleShifts.length})
-                  </h3>
+                {/* Calendar View */}
+                {(() => {
+                  const year = selectedSchedule.targetYear;
+                  const month = selectedSchedule.targetMonth - 1;
+                  const firstDay = new Date(year, month, 1);
+                  const lastDay = new Date(year, month + 1, 0);
+                  const daysInMonth = lastDay.getDate();
+                  const startDayOffset = firstDay.getDay();
 
-                  {scheduleShifts.length === 0 ? (
-                    <p className="text-slate-500 text-center py-4">No shifts in this schedule</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {scheduleShifts.map(shift => {
-                        // Check if this shift is assigned to current user
-                        const isMyShift = scheduleAssignments.some(
-                          a => a.shiftId === shift.id && a.volunteerId === currentUser.id
-                        );
-                        const shiftTeam = shiftCoworkers[shift.id] || [];
+                  const days: (number | null)[] = [];
+                  for (let i = 0; i < startDayOffset; i++) days.push(null);
+                  for (let i = 1; i <= daysInMonth; i++) days.push(i);
 
-                        return (
-                          <div
-                            key={shift.id}
-                            className={`p-4 rounded-xl border-l-4 transition-all ${
-                              isMyShift
-                                ? 'bg-indigo-50 border-indigo-500 shadow-sm'
-                                : 'bg-slate-50 border-slate-300'
-                            }`}
-                          >
-                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <h4 className="font-bold text-slate-900">{shift.title}</h4>
-                                  {isMyShift && (
-                                    <span className="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
-                                      YOUR SHIFT
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-3 text-slate-600 text-sm mb-2">
-                                  <span className="flex items-center gap-1.5">
-                                    <Calendar size={14}/> {formatDateDDMMYYYY(shift.date)}
-                                  </span>
-                                  <span className="flex items-center gap-1.5">
-                                    <Clock size={14}/> {shift.startTime} - {shift.endTime}
-                                  </span>
-                                  {shift.location && (
-                                    <span className="flex items-center gap-1.5">
-                                      <MapPin size={14}/> {shift.location}
-                                    </span>
-                                  )}
-                                </div>
-                                {/* Team Members */}
-                                {shiftTeam.length > 0 && (
-                                  <div className="flex items-center gap-2 mt-2">
-                                    <Users size={14} className="text-slate-500" />
-                                    <div className="flex items-center gap-1">
-                                      {shiftTeam.slice(0, 5).map((volunteer, idx) => (
-                                        <div
-                                          key={volunteer.id}
-                                          className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold border-2 border-white ${
-                                            volunteer.id === currentUser.id
-                                              ? 'bg-indigo-600 text-white'
-                                              : 'bg-slate-200 text-slate-700'
-                                          }`}
-                                          style={{ marginLeft: idx > 0 ? '-6px' : '0' }}
-                                          title={volunteer.name}
-                                        >
-                                          {volunteer.name.charAt(0).toUpperCase()}
-                                        </div>
-                                      ))}
-                                      {shiftTeam.length > 5 && (
-                                        <div
-                                          className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-xs font-semibold text-slate-600 border-2 border-white"
-                                          style={{ marginLeft: '-6px' }}
-                                        >
-                                          +{shiftTeam.length - 5}
+                  return (
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                      {/* Day Headers */}
+                      <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
+                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                          <div key={d} className="py-2 sm:py-3 text-center text-xs sm:text-sm font-semibold text-slate-600">{d}</div>
+                        ))}
+                      </div>
+                      {/* Calendar Grid */}
+                      <div className="grid grid-cols-7 auto-rows-fr bg-slate-100 gap-px">
+                        {days.map((day, idx) => {
+                          if (!day) return <div key={`empty-${idx}`} className="bg-white min-h-[80px] sm:min-h-[120px]" />;
+
+                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                          const dayShifts = scheduleShifts.filter(s => s.date === dateStr);
+
+                          return (
+                            <div key={day} className="bg-white min-h-[80px] sm:min-h-[120px] p-1 sm:p-2 flex flex-col">
+                              <div className="text-xs sm:text-sm font-bold text-slate-400 mb-1">{day}</div>
+                              <div className="space-y-1 flex-1 overflow-y-auto">
+                                {dayShifts.map(shift => {
+                                  const isMyShift = scheduleAssignments.some(
+                                    a => a.shiftId === shift.id && a.volunteerId === currentUser.id
+                                  );
+                                  const shiftTeam = shiftCoworkers[shift.id] || [];
+                                  const location = shift.location || 'BOTH';
+                                  const isDizengoff = location === 'DIZENGOFF';
+                                  const isHatachana = location === 'HATACHANA';
+
+                                  let bgClass = 'bg-purple-50 border-purple-300';
+                                  let locationBadge = 'B';
+                                  let badgeClass = 'bg-purple-500';
+
+                                  if (isDizengoff) {
+                                    bgClass = 'bg-orange-50 border-orange-300';
+                                    locationBadge = 'D';
+                                    badgeClass = 'bg-orange-500';
+                                  } else if (isHatachana) {
+                                    bgClass = 'bg-blue-50 border-blue-300';
+                                    locationBadge = 'H';
+                                    badgeClass = 'bg-blue-500';
+                                  }
+
+                                  if (isMyShift) {
+                                    bgClass = 'bg-indigo-100 border-indigo-500 ring-2 ring-indigo-300';
+                                  }
+
+                                  return (
+                                    <div
+                                      key={shift.id}
+                                      className={`p-1 sm:p-1.5 rounded border text-xs cursor-pointer hover:shadow-sm transition-shadow ${bgClass}`}
+                                      onClick={() => loadCoworkers(shift)}
+                                      title={`${shift.title} - ${shift.startTime}-${shift.endTime}${isMyShift ? ' (Your Shift)' : ''}`}
+                                    >
+                                      <div className="flex items-center gap-1 mb-0.5">
+                                        <span className={`w-3 h-3 sm:w-4 sm:h-4 rounded text-white text-[8px] sm:text-[10px] font-bold flex items-center justify-center flex-shrink-0 ${badgeClass}`}>
+                                          {locationBadge}
+                                        </span>
+                                        <span className="font-semibold truncate text-[10px] sm:text-xs text-slate-800">
+                                          {shift.startTime.slice(0,5)}
+                                        </span>
+                                        {isMyShift && (
+                                          <span className="w-2 h-2 rounded-full bg-indigo-600 flex-shrink-0" title="Your Shift"></span>
+                                        )}
+                                      </div>
+                                      <div className="hidden sm:block text-[10px] text-slate-600 truncate">{shift.title}</div>
+                                      {shiftTeam.length > 0 && (
+                                        <div className="flex items-center gap-0.5 mt-0.5">
+                                          {shiftTeam.slice(0, 3).map((vol, i) => (
+                                            <div
+                                              key={vol.id}
+                                              className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full text-[8px] sm:text-[10px] font-bold flex items-center justify-center ${
+                                                vol.id === currentUser.id
+                                                  ? 'bg-indigo-600 text-white'
+                                                  : 'bg-slate-200 text-slate-700'
+                                              }`}
+                                              style={{ marginLeft: i > 0 ? '-4px' : '0' }}
+                                              title={vol.name}
+                                            >
+                                              {vol.name.charAt(0)}
+                                            </div>
+                                          ))}
+                                          {shiftTeam.length > 3 && (
+                                            <span className="text-[8px] sm:text-[10px] text-slate-500 ml-0.5">+{shiftTeam.length - 3}</span>
+                                          )}
                                         </div>
                                       )}
                                     </div>
-                                    <span className="text-xs text-slate-500 ml-1">
-                                      {shiftTeam.length} volunteer{shiftTeam.length !== 1 ? 's' : ''}
-                                    </span>
-                                  </div>
-                                )}
+                                  );
+                                })}
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  )}
+                  );
+                })()}
+
+                {/* Legend */}
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                  <p className="text-xs text-slate-500 text-center">
+                    Click on any shift to see who's working. Your shifts are highlighted with a purple ring.
+                  </p>
                 </div>
               </div>
             )}
