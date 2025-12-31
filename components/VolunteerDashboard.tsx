@@ -17,8 +17,7 @@ interface VolunteerDashboardProps {
 
 const DAYS = [
   { id: '0', label: 'Sunday' },
-  { id: '1_morning', label: 'Monday (09:00-12:00)' },
-  { id: '1_afternoon', label: 'Monday (11:00-14:00)' },
+  { id: '1', label: 'Monday' },
   { id: '2_morning', label: 'Tuesday Morning' },
   { id: '2_evening', label: 'Tuesday Evening' },
   { id: '3', label: 'Wednesday' },

@@ -25,8 +25,7 @@ interface AdminDashboardProps {
 
 const DAYS = [
   { id: '0', label: 'Sun' },
-  { id: '1_morning', label: 'Mon (09-12)' },
-  { id: '1_afternoon', label: 'Mon (11-14)' },
+  { id: '1', label: 'Mon' },
   { id: '2_morning', label: 'Tue (AM)' },
   { id: '2_evening', label: 'Tue (PM)' },
   { id: '3', label: 'Wed' },
