@@ -660,7 +660,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-3 sm:p-6 md:p-12 relative">
+    <div className="min-h-screen bg-slate-50 p-3 sm:p-6 md:p-12 pb-24 relative">
       <div className="max-w-5xl mx-auto">
 
         {/* Profile Header */}
@@ -1139,6 +1139,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             )}
           </div>
         )}
+
+        {/* Bottom spacer to ensure full scrollability */}
+        <div className="h-16 mt-8 flex items-center justify-center">
+          <div className="w-32 h-1 bg-slate-200 rounded-full"></div>
+        </div>
       </div>
 
       {/* Edit Modal */}
