@@ -213,6 +213,51 @@ export const deleteSchedule = async (
 };
 
 /**
+ * Delete all saved schedules for a specific month/year
+ */
+export const deleteSchedulesForMonth = async (
+  targetMonth: number,
+  targetYear: number
+): Promise<{ success: boolean; deletedCount: number; error?: string }> => {
+  try {
+    // First get all schedules for this month to count them
+    const { data: schedules, error: fetchError } = await supabase
+      .from('saved_schedules')
+      .select('id')
+      .eq('target_month', targetMonth)
+      .eq('target_year', targetYear);
+
+    if (fetchError) {
+      console.error('Error fetching schedules to delete:', fetchError);
+      return { success: false, deletedCount: 0, error: fetchError.message };
+    }
+
+    const count = schedules?.length || 0;
+
+    if (count === 0) {
+      return { success: true, deletedCount: 0 };
+    }
+
+    // Delete all schedules for this month (CASCADE will delete assignments)
+    const { error } = await supabase
+      .from('saved_schedules')
+      .delete()
+      .eq('target_month', targetMonth)
+      .eq('target_year', targetYear);
+
+    if (error) {
+      console.error('Error deleting schedules for month:', error);
+      return { success: false, deletedCount: 0, error: error.message };
+    }
+
+    return { success: true, deletedCount: count };
+  } catch (error: any) {
+    console.error('Unexpected error deleting schedules for month:', error);
+    return { success: false, deletedCount: 0, error: error.message || 'Unknown error' };
+  }
+};
+
+/**
  * Get the most recent saved schedule for a specific month/year
  */
 export const getLatestScheduleForMonth = async (

@@ -660,8 +660,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-3 sm:p-6 md:p-12 pb-24 relative">
-      <div className="max-w-5xl mx-auto">
+    <div className="h-full bg-slate-50 overflow-y-auto">
+      <div className="max-w-5xl mx-auto p-3 sm:p-6 md:p-12 pb-24">
 
         {/* Profile Header */}
         <div className="bg-white rounded-2xl p-4 sm:p-6 md:p-8 shadow-sm border border-slate-200 mb-6 sm:mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6">

@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
+import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, deleteSchedulesForMonth, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
@@ -598,12 +598,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
-    if (!confirm('Apply these assignments to the database? Volunteers will be able to see their shifts.')) {
+    if (!confirm('Apply these assignments to the database? This will replace any existing assignments for this month. Volunteers will be able to see their shifts.')) {
       return;
     }
 
     setIsApplyingAssignments(true);
     try {
+      // First, clear existing assignments for this month's shifts to avoid duplicates
+      const shiftIds = displayedShifts.map(s => s.id);
+      const clearResult = await clearMonthAssignments(shiftIds);
+
+      if (!clearResult.success) {
+        alert(`Failed to clear existing assignments: ${clearResult.error}`);
+        setIsApplyingAssignments(false);
+        return;
+      }
+
+      // Now apply the new assignments
       const result = await applyScheduleAssignments(generatedAssignments);
 
       if (result.success) {
@@ -622,20 +633,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Clear all assignments for the current month
   const handleClearAssignments = async () => {
-    if (!confirm('Clear all assignments for this month? This will remove all volunteer assignments from the database.')) {
+    const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
+
+    if (!confirm(`Clear ALL assignments for ${monthName} ${targetYear}?\n\nThis will:\n• Remove all volunteer shift assignments from the database\n• Delete all saved schedules for this month\n• Clear the current view\n\nThis action cannot be undone.`)) {
       return;
     }
 
-    const shiftIds = displayedShifts.map(s => s.id);
-    const result = await clearMonthAssignments(shiftIds);
+    try {
+      // Clear shift assignments from database
+      const shiftIds = displayedShifts.map(s => s.id);
+      const clearResult = await clearMonthAssignments(shiftIds);
 
-    if (result.success) {
-      alert('Assignments cleared successfully');
+      if (!clearResult.success) {
+        alert(`Failed to clear assignments: ${clearResult.error}`);
+        return;
+      }
+
+      // Delete all saved schedules for this month
+      const deleteResult = await deleteSchedulesForMonth(targetMonth, targetYear);
+
+      if (!deleteResult.success) {
+        alert(`Assignments cleared, but failed to delete saved schedules: ${deleteResult.error}`);
+      }
+
+      // Clear the UI state
       setGeneratedAssignments([]);
       setAssignmentsApplied(false);
       setScheduleResultView('none');
-    } else {
-      alert(`Failed to clear assignments: ${result.error}`);
+
+      // Refresh the schedule history
+      loadScheduleHistory();
+
+      const message = deleteResult.deletedCount > 0
+        ? `Cleared all assignments and deleted ${deleteResult.deletedCount} saved schedule(s) for ${monthName} ${targetYear}.`
+        : `Cleared all assignments for ${monthName} ${targetYear}.`;
+
+      alert(message);
+    } catch (err) {
+      console.error('Exception clearing assignments:', err);
+      alert('An error occurred while clearing assignments');
     }
   };
 
