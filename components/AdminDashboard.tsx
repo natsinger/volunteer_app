@@ -749,16 +749,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleDeleteSchedule = async (scheduleId: string) => {
-    if (!confirm('Are you sure you want to delete this saved schedule?')) {
+    const schedule = savedSchedules.find(s => s.id === scheduleId);
+    const scheduleName = schedule?.name || 'this schedule';
+
+    if (!confirm(`Delete "${scheduleName}"?\n\nThis will:\n• Remove the schedule from history\n• Remove all volunteer shift assignments (volunteers will no longer see these shifts)\n\nThis action cannot be undone.`)) {
       return;
     }
 
-    const result = await deleteSchedule(scheduleId);
-    if (result.success) {
-      alert('Schedule deleted successfully');
-      loadScheduleHistory();
-    } else {
-      alert(`Failed to delete schedule: ${result.error}`);
+    try {
+      // First, load the assignments from this saved schedule to get shift IDs
+      const assignmentsResult = await loadScheduleAssignments(scheduleId);
+
+      if (assignmentsResult.success && assignmentsResult.assignments && assignmentsResult.assignments.length > 0) {
+        // Get unique shift IDs from this schedule
+        const shiftIds = [...new Set(assignmentsResult.assignments.map(a => a.shiftId))];
+
+        console.log('[AdminDashboard] Deleting schedule and clearing', shiftIds.length, 'shifts from shift_assignments');
+
+        // Clear these assignments from shift_assignments (what volunteers see)
+        const clearResult = await clearMonthAssignments(shiftIds);
+
+        if (!clearResult.success) {
+          console.error('[AdminDashboard] Failed to clear shift_assignments:', clearResult.error);
+          // Continue anyway to delete the saved schedule
+        } else {
+          console.log('[AdminDashboard] Cleared', clearResult.deletedCount, 'volunteer assignments');
+        }
+      }
+
+      // Now delete the saved schedule from history
+      const result = await deleteSchedule(scheduleId);
+
+      if (result.success) {
+        alert(`Schedule "${scheduleName}" deleted successfully.\n\nVolunteers will no longer see these shifts.`);
+        loadScheduleHistory();
+
+        // Clear UI state if we were viewing this schedule
+        setGeneratedAssignments([]);
+        setAssignmentsApplied(false);
+        setScheduleResultView('none');
+      } else {
+        alert(`Failed to delete schedule: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Exception deleting schedule:', err);
+      alert('An error occurred while deleting the schedule');
     }
   };
 
