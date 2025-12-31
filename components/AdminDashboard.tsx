@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, deleteSchedulesForMonth, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
+import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
@@ -631,29 +631,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  // Clear all assignments for the current month
+  // Clear all assignments for the current month (only from shift_assignments table, not saved history)
   const handleClearAssignments = async () => {
     const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
 
-    if (!confirm(`Clear ALL assignments for ${monthName} ${targetYear}?\n\nThis will:\n• Remove all volunteer shift assignments from the database\n• Delete all saved schedules for this month\n• Clear the current view\n\nThis action cannot be undone.`)) {
+    if (!confirm(`Clear ALL volunteer assignments for ${monthName} ${targetYear}?\n\nThis will:\n• Remove all volunteer shift assignments from the database\n• Volunteers will no longer see these shifts\n• Saved schedules in history will NOT be deleted\n\nThis action cannot be undone.`)) {
       return;
     }
 
     try {
-      // Clear shift assignments from database
+      // Clear shift assignments from database (this is what volunteers see)
       const shiftIds = displayedShifts.map(s => s.id);
+      console.log('[AdminDashboard] Clearing assignments for shift IDs:', shiftIds);
+
       const clearResult = await clearMonthAssignments(shiftIds);
+      console.log('[AdminDashboard] Clear result:', clearResult);
 
       if (!clearResult.success) {
         alert(`Failed to clear assignments: ${clearResult.error}`);
         return;
-      }
-
-      // Delete all saved schedules for this month
-      const deleteResult = await deleteSchedulesForMonth(targetMonth, targetYear);
-
-      if (!deleteResult.success) {
-        alert(`Assignments cleared, but failed to delete saved schedules: ${deleteResult.error}`);
       }
 
       // Clear the UI state
@@ -661,14 +657,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setAssignmentsApplied(false);
       setScheduleResultView('none');
 
-      // Refresh the schedule history
-      loadScheduleHistory();
-
-      const message = deleteResult.deletedCount > 0
-        ? `Cleared all assignments and deleted ${deleteResult.deletedCount} saved schedule(s) for ${monthName} ${targetYear}.`
-        : `Cleared all assignments for ${monthName} ${targetYear}.`;
-
-      alert(message);
+      const deletedCount = clearResult.deletedCount || 0;
+      alert(`Cleared ${deletedCount} volunteer assignment(s) for ${monthName} ${targetYear}.\n\nVolunteers will no longer see these shifts.\nSaved schedules in history are preserved.`);
     } catch (err) {
       console.error('Exception clearing assignments:', err);
       alert('An error occurred while clearing assignments');

@@ -66,21 +66,41 @@ export const applyScheduleAssignments = async (
  */
 export const clearMonthAssignments = async (
   shiftIds: string[]
-): Promise<{ success: boolean; error?: string }> => {
+): Promise<{ success: boolean; deletedCount?: number; error?: string }> => {
   try {
-    const { error } = await supabase
+    console.log('[clearMonthAssignments] Attempting to delete assignments for', shiftIds.length, 'shifts');
+    console.log('[clearMonthAssignments] Shift IDs:', shiftIds);
+
+    // First, count how many assignments exist
+    const { data: existingAssignments, error: countError } = await supabase
       .from('shift_assignments')
-      .delete()
+      .select('id')
       .in('shift_id', shiftIds);
 
+    if (countError) {
+      console.error('[clearMonthAssignments] Error counting existing assignments:', countError);
+    } else {
+      console.log('[clearMonthAssignments] Found', existingAssignments?.length || 0, 'existing assignments to delete');
+    }
+
+    // Delete the assignments
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .delete()
+      .in('shift_id', shiftIds)
+      .select();
+
     if (error) {
-      console.error('Error clearing assignments:', error);
+      console.error('[clearMonthAssignments] Error clearing assignments:', error);
       return { success: false, error: error.message };
     }
 
-    return { success: true };
+    console.log('[clearMonthAssignments] Delete result:', data);
+    console.log('[clearMonthAssignments] Successfully deleted', data?.length || 0, 'assignments');
+
+    return { success: true, deletedCount: data?.length || 0 };
   } catch (err) {
-    console.error('Exception clearing assignments:', err);
+    console.error('[clearMonthAssignments] Exception clearing assignments:', err);
     return { success: false, error: String(err) };
   }
 };
