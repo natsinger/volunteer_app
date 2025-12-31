@@ -7,11 +7,32 @@ import { supabase } from './supabase';
 export const isGoogleUser = async (): Promise<boolean> => {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
+    if (!user) {
+      console.log('[GoogleCalendar] isGoogleUser: No user found');
+      return false;
+    }
 
-    // Check if the provider is Google
-    const provider = user.app_metadata?.provider || user.user_metadata?.iss;
-    return provider === 'google' || (typeof provider === 'string' && provider.includes('google'));
+    // Check multiple possible locations for provider info
+    const appProvider = user.app_metadata?.provider;
+    const issuer = user.user_metadata?.iss;
+    const identities = user.identities || [];
+    const hasGoogleIdentity = identities.some((id: any) => id.provider === 'google');
+
+    console.log('[GoogleCalendar] isGoogleUser check:', {
+      appProvider,
+      issuer,
+      hasGoogleIdentity,
+      identitiesCount: identities.length
+    });
+
+    // Check if the provider is Google through various means
+    const isGoogle =
+      appProvider === 'google' ||
+      hasGoogleIdentity ||
+      (typeof issuer === 'string' && issuer.includes('google'));
+
+    console.log('[GoogleCalendar] isGoogleUser result:', isGoogle);
+    return isGoogle;
   } catch (error) {
     console.error('Error checking if user is Google user:', error);
     return false;

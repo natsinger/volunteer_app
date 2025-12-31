@@ -42,16 +42,6 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   // Google Calendar sync state
   const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
-  const [showGoogleCalendar, setShowGoogleCalendar] = useState(false);
-
-  // Check if user signed in with Google
-  useEffect(() => {
-    const checkGoogleUser = async () => {
-      const isGoogle = await isGoogleUser();
-      setShowGoogleCalendar(isGoogle);
-    };
-    checkGoogleUser();
-  }, []);
 
   // Keep editForm synchronized with currentUser changes
   useEffect(() => {
@@ -541,13 +531,25 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   const handleSyncToGoogleCalendar = async () => {
-    if (!showGoogleCalendar) {
-      alert('You need to sign in with Google to use calendar sync');
+    if (myShifts.length === 0) {
+      alert('You have no shifts to sync');
       return;
     }
 
-    if (myShifts.length === 0) {
-      alert('You have no shifts to sync');
+    // Check if user is signed in with Google
+    const isGoogle = await isGoogleUser();
+    console.log('[VolunteerDashboard] handleSyncToGoogleCalendar - isGoogleUser:', isGoogle);
+
+    if (!isGoogle) {
+      const shouldRelogin = confirm(
+        'To sync shifts with Google Calendar, you need to sign in with your Google account.\n\n' +
+        'Click OK to sign in with Google now.'
+      );
+      if (shouldRelogin) {
+        // Import and call requestCalendarPermissions
+        const { requestCalendarPermissions } = await import('../lib/googleCalendar');
+        await requestCalendarPermissions();
+      }
       return;
     }
 
@@ -562,7 +564,16 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       if (result.success) {
         alert(`Successfully added ${result.added} shift(s) to your Google Calendar!${result.failed > 0 ? `\n${result.failed} shift(s) failed to sync.` : ''}`);
       } else {
-        alert(result.error || 'Failed to sync shifts to Google Calendar');
+        // If error mentions signing in again, offer to re-authenticate
+        if (result.error?.includes('sign out') || result.error?.includes('sign in')) {
+          const shouldRelogin = confirm(result.error + '\n\nClick OK to sign in with Google now.');
+          if (shouldRelogin) {
+            const { requestCalendarPermissions } = await import('../lib/googleCalendar');
+            await requestCalendarPermissions();
+          }
+        } else {
+          alert(result.error || 'Failed to sync shifts to Google Calendar');
+        }
       }
     } catch (error) {
       console.error('Error syncing to Google Calendar:', error);
@@ -731,27 +742,25 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <span className="line-clamp-1">My Upcoming Shifts </span>
               </h2>
               <div className="flex items-center gap-2">
-                {showGoogleCalendar && myShifts.length > 0 && (
-                  <button
-                    onClick={handleSyncToGoogleCalendar}
-                    disabled={isSyncingCalendar}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                    title="Add shifts to Google Calendar"
-                  >
-                    {isSyncingCalendar ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        <span className="hidden sm:inline">Syncing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Calendar size={14} />
-                        <span className="hidden sm:inline">Sync to Google</span>
-                        <span className="sm:hidden">Sync</span>
-                      </>
-                    )}
-                  </button>
-                )}
+                <button
+                  onClick={handleSyncToGoogleCalendar}
+                  disabled={isSyncingCalendar}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  title="Add shifts to Google Calendar"
+                >
+                  {isSyncingCalendar ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span className="hidden sm:inline">Syncing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Calendar size={14} />
+                      <span className="hidden sm:inline">Sync to Google</span>
+                      <span className="sm:hidden">Sync</span>
+                    </>
+                  )}
+                </button>
                 <button
                   onClick={loadMyAssignments}
                   disabled={isLoadingAssignments}
