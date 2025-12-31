@@ -16,23 +16,31 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================================
--- 2. Drop ALL existing policies on pending_users to start fresh
+-- 2. Add display_name column if it doesn't exist
+-- ============================================================================
+
+ALTER TABLE pending_users ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE pending_users ADD COLUMN IF NOT EXISTS name TEXT;
+
+-- ============================================================================
+-- 3. Drop ALL existing policies on pending_users to start fresh
 -- ============================================================================
 
 DROP POLICY IF EXISTS "Admins can read all pending users" ON pending_users;
 DROP POLICY IF EXISTS "Users can insert their own pending record" ON pending_users;
 DROP POLICY IF EXISTS "Authenticated users can insert pending record" ON pending_users;
 DROP POLICY IF EXISTS "Users can read their own pending record" ON pending_users;
+DROP POLICY IF EXISTS "Users can read own pending record" ON pending_users;
 DROP POLICY IF EXISTS "Admins can delete pending users" ON pending_users;
 
 -- ============================================================================
--- 3. Ensure RLS is enabled
+-- 4. Ensure RLS is enabled
 -- ============================================================================
 
 ALTER TABLE pending_users ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================================
--- 4. Create correct RLS policies
+-- 5. Create correct RLS policies
 -- ============================================================================
 
 -- Admins can read ALL pending users
@@ -59,16 +67,15 @@ CREATE POLICY "Admins can delete pending users"
   USING (is_admin());
 
 -- ============================================================================
--- 5. Add any missing users to pending_users table
+-- 6. Add any missing users to pending_users table
 -- This catches users who signed up but weren't added to pending_users
 -- ============================================================================
 
-INSERT INTO pending_users (user_id, email, provider, display_name, created_at)
+INSERT INTO pending_users (user_id, email, provider, created_at)
 SELECT
   au.id as user_id,
   au.email,
   COALESCE(au.raw_app_meta_data->>'provider', 'email') as provider,
-  COALESCE(au.raw_user_meta_data->>'full_name', au.raw_user_meta_data->>'name') as display_name,
   au.created_at
 FROM auth.users au
 LEFT JOIN admins a ON au.id = a.user_id
@@ -80,16 +87,14 @@ WHERE a.user_id IS NULL
 ON CONFLICT (user_id) DO NOTHING;
 
 -- ============================================================================
--- 6. Verify the setup
+-- 7. Verify the setup
 -- ============================================================================
 
 -- Show all policies
 SELECT
   policyname,
   cmd,
-  roles,
-  qual as "USING clause",
-  with_check as "WITH CHECK clause"
+  roles
 FROM pg_policies
 WHERE tablename = 'pending_users'
 ORDER BY policyname;
@@ -100,7 +105,7 @@ SELECT
 FROM pending_users;
 
 -- Show pending users (if any)
-SELECT id, user_id, email, provider, display_name, created_at
+SELECT id, user_id, email, provider, created_at
 FROM pending_users
 ORDER BY created_at DESC;
 
