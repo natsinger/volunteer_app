@@ -36,7 +36,7 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: from || 'Volunteer App <noreply@yourdomain.com>', // Update with your domain
+        from: from || 'Volunteer App <onboarding@resend.dev>', // Using Resend test domain - change to your verified domain later
         to: Array.isArray(to) ? to : [to],
         subject,
         html,
