@@ -811,11 +811,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
-    // Check if shift is at capacity (max 5)
+    // Admin can manually add more than 5 volunteers if needed
+    // The algorithm enforces a max of 5, but admins can override manually
     const currentCount = generatedAssignments.filter(a => a.shiftId === shiftId).length;
     if (currentCount >= 5) {
-      alert('This shift is already at maximum capacity (5 volunteers)');
-      return;
+      if (!confirm(`This shift already has ${currentCount} volunteers (recommended max is 5).\n\nAre you sure you want to add another volunteer?`)) {
+        return;
+      }
     }
 
     // Update local state
@@ -1015,14 +1017,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </div>
 
                           <div className="space-y-0.5">
-                            {assignees.slice(0, 2).map(v => (
+                            {assignees.slice(0, 3).map(v => (
                               <div key={v.id} className="truncate opacity-80 text-[10px] flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-slate-400"></span>
-                                {v.name.split(' ')[0]}
+                                {v.name}
                               </div>
                             ))}
-                            {count > 2 && (
-                              <div className="text-[9px] opacity-60 italic pl-2">+{count - 2} more</div>
+                            {count > 3 && (
+                              <div className="text-[9px] opacity-60 italic pl-2">+{count - 3} more</div>
                             )}
                              {count === 0 && (
                               <div className="text-[9px] text-red-500 italic">Unassigned</div>
@@ -1528,21 +1530,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={handleGenerateSchedule}
-                  disabled={isGenerating}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-lg font-semibold px-8 py-4 rounded-xl shadow-lg shadow-emerald-200 hover:shadow-xl transition-all flex items-center gap-3 mx-auto"
-                >
-                  {isGenerating ? (
-                    <>
-                      <RefreshCw className="animate-spin" /> Generating Plan...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles /> Generate Schedule for {targetMonth}/{targetYear}
-                    </>
-                  )}
-                </button>
+                <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+                  <button
+                    onClick={handleGenerateSchedule}
+                    disabled={isGenerating}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-lg font-semibold px-8 py-4 rounded-xl shadow-lg shadow-emerald-200 hover:shadow-xl transition-all flex items-center gap-3"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <RefreshCw className="animate-spin" /> Generating Plan...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles /> Generate New Schedule
+                      </>
+                    )}
+                  </button>
+                  <span className="text-slate-400 font-medium">or</span>
+                  <button
+                    onClick={loadExistingAssignments}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-semibold px-8 py-4 rounded-xl shadow-lg shadow-indigo-200 hover:shadow-xl transition-all flex items-center gap-3"
+                  >
+                    <Calendar /> Load Published Schedule
+                  </button>
+                </div>
+                <p className="text-sm text-slate-500 mt-4">
+                  Load Published = view what volunteers currently see | Generate New = create fresh assignments
+                </p>
               </div>
             ) : (
               // Results View (Calendar or Stats)
@@ -1590,8 +1604,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <button
                       onClick={handleClearAssignments}
                       className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                      title="Clear all assignments visible to volunteers (keeps saved history)"
                     >
-                      <X size={16} /> Clear All
+                      <X size={16} /> Clear Published
                     </button>
                   </div>
                 </div>
