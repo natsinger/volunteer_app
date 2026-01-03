@@ -56,7 +56,7 @@ serve(async (req) => {
 
     // Send email to each volunteer
     // NOTE: Configure your email service here (Resend, SendGrid, etc.)
-    const appUrl = Deno.env.get('APP_URL') ?? 'https://your-app-url.com'
+    const appUrl = Deno.env.get('APP_URL') ?? 'https://volunteer-app-self.vercel.app/'
     let sentCount = 0
 
     for (const volunteer of volunteers) {
