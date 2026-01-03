@@ -91,10 +91,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     loadPendingUsers();
   }, []);
 
-  // Load last saved schedule for the selected month when it changes
-  useEffect(() => {
-    loadLastScheduleForMonth();
-  }, [targetMonth, targetYear]);
+  // Note: Removed automatic schedule loading to allow manual selection from saved schedules list
+  // Users can now choose which saved schedule to load via the UI
 
   // Generate displayed shifts whenever data changes
   useEffect(() => {
