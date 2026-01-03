@@ -1018,7 +1018,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             {assignees.slice(0, 2).map(v => (
                               <div key={v.id} className="truncate opacity-80 text-[10px] flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-slate-400"></span>
-                                {v.name.split(' ')[0]}
+                                {v.name}
                               </div>
                             ))}
                             {count > 2 && (
@@ -1527,6 +1527,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <div className="text-sm text-slate-500">Open Shifts ({targetMonth}/{targetYear})</div>
                   </div>
                 </div>
+
+                {/* Saved Schedules for Selected Month */}
+                {savedSchedules.filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear).length > 0 && (
+                  <div className="max-w-lg mx-auto mb-8 bg-indigo-50 border border-indigo-200 p-4 rounded-xl text-left">
+                    <div className="flex items-center gap-2 mb-3">
+                      <History size={18} className="text-indigo-600" />
+                      <h3 className="font-bold text-slate-900">Saved Schedules for {targetMonth}/{targetYear}</h3>
+                    </div>
+                    <div className="space-y-2 mb-3">
+                      {savedSchedules
+                        .filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear)
+                        .slice(0, 3)
+                        .map(schedule => (
+                          <div key={schedule.id} className="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+                            <div>
+                              <div className="font-medium text-slate-900">{schedule.name}</div>
+                              <div className="text-xs text-slate-500">
+                                {new Date(schedule.createdAt).toLocaleDateString()} • {schedule.assignmentCount} assignments
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleLoadSchedule(schedule.id)}
+                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg font-medium transition-colors"
+                            >
+                              Load
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                    {savedSchedules.filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear).length > 3 && (
+                      <button
+                        onClick={() => setShowScheduleHistory(true)}
+                        className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+                      >
+                        View all {savedSchedules.filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear).length} schedules →
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <button
                   onClick={handleGenerateSchedule}
