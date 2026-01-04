@@ -932,14 +932,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
           <div className="grid grid-cols-7 auto-rows-fr bg-slate-100 gap-px border-l border-slate-200">
             {days.map((day, idx) => {
-              if (!day) return <div key={`empty-${idx}`} className="bg-white min-h-[140px]" />;
-              
+              if (!day) return <div key={`empty-${idx}`} className="bg-white min-h-[200px]" />;
+
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
               const daysShifts = shifts.filter(s => s.date === dateStr);
 
               return (
-                <div key={day} className="bg-white min-h-[140px] p-2 hover:bg-slate-50 transition-colors flex flex-col">
-                  <div className="text-sm font-bold text-slate-400 mb-2">{day}</div>
+                <div key={day} className="bg-white min-h-[200px] p-3 hover:bg-slate-50 transition-colors flex flex-col">
+                  <div className="text-base font-bold text-slate-400 mb-2">{day}</div>
                   <div className="space-y-2 flex-1">
                     {daysShifts.map(s => {
                       // Determine location from shift properties
@@ -1013,14 +1013,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </div>
 
                           <div className="space-y-0.5">
-                            {assignees.slice(0, 2).map(v => (
-                              <div key={v.id} className="truncate opacity-80 text-[10px] flex items-center gap-1">
+                            {assignees.slice(0, 4).map(v => (
+                              <div key={v.id} className="truncate opacity-80 text-[11px] flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-slate-400"></span>
                                 {v.name}
                               </div>
                             ))}
-                            {count > 2 && (
-                              <div className="text-[9px] opacity-60 italic pl-2">+{count - 2} more</div>
+                            {count > 4 && (
+                              <div className="text-[10px] opacity-60 italic pl-2">+{count - 4} more</div>
                             )}
                              {count === 0 && (
                               <div className="text-[9px] text-red-500 italic">Unassigned</div>
@@ -1041,22 +1041,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const StatsView = () => {
     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    const [expandedVolunteerId, setExpandedVolunteerId] = React.useState<string | null>(null);
 
     const stats = volunteers.map(vol => {
       const capacity = getMonthlyCapacity(vol.frequency);
-      
-      const assignedCount = generatedAssignments.filter(a => {
+
+      const volunteerAssignments = generatedAssignments.filter(a => {
          const shift = shifts.find(s => s.id === a.shiftId);
          return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
-      }).length;
+      });
 
+      const assignedShifts = volunteerAssignments.map(a => {
+        return shifts.find(s => s.id === a.shiftId);
+      }).filter(Boolean).sort((a, b) => a!.date.localeCompare(b!.date));
+
+      const assignedCount = volunteerAssignments.length;
       const percentage = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
-      
+
       return {
         ...vol,
         capacity,
         assignedCount,
-        percentage
+        percentage,
+        assignedShifts
       };
     }).sort((a, b) => b.percentage - a.percentage);
 
@@ -1075,32 +1082,86 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {stats.map(vol => (
-                <tr key={vol.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 font-medium text-slate-900">{vol.name}</td>
-                  <td className="px-6 py-4 text-slate-600 text-sm">{vol.role} ({vol.skillLevel})</td>
-                  <td className="px-6 py-4 font-medium text-slate-800">
-                    <span className={vol.assignedCount > vol.capacity ? 'text-red-600 font-bold' : ''}>
-                       {vol.assignedCount}
-                    </span> / {vol.capacity}
-                  </td>
-                  <td className="px-6 py-4 w-1/3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            vol.assignedCount > vol.capacity ? 'bg-red-500' :
-                            vol.percentage >= 100 ? 'bg-emerald-500' : 
-                            vol.percentage >= 50 ? 'bg-blue-500' : 'bg-amber-500'
-                          }`}
-                          style={{ width: `${Math.min(vol.percentage, 100)}%` }}
-                        ></div>
+                <React.Fragment key={vol.id}>
+                  <tr
+                    className="hover:bg-slate-50 cursor-pointer transition-colors"
+                    onClick={() => setExpandedVolunteerId(expandedVolunteerId === vol.id ? null : vol.id)}
+                  >
+                    <td className="px-6 py-4 font-medium text-slate-900">
+                      <div className="flex items-center gap-2">
+                        <ChevronRight
+                          size={16}
+                          className={`transition-transform ${expandedVolunteerId === vol.id ? 'rotate-90' : ''}`}
+                        />
+                        {vol.name}
                       </div>
-                      <span className={`text-xs font-semibold w-12 text-right ${vol.assignedCount > vol.capacity ? 'text-red-600' : 'text-slate-500'}`}>
-                        {Math.round(vol.percentage)}%
-                      </span>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="px-6 py-4 text-slate-600 text-sm">{vol.role} ({vol.skillLevel})</td>
+                    <td className="px-6 py-4 font-medium text-slate-800">
+                      <span className={vol.assignedCount > vol.capacity ? 'text-red-600 font-bold' : ''}>
+                         {vol.assignedCount}
+                      </span> / {vol.capacity}
+                    </td>
+                    <td className="px-6 py-4 w-1/3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              vol.assignedCount > vol.capacity ? 'bg-red-500' :
+                              vol.percentage >= 100 ? 'bg-emerald-500' :
+                              vol.percentage >= 50 ? 'bg-blue-500' : 'bg-amber-500'
+                            }`}
+                            style={{ width: `${Math.min(vol.percentage, 100)}%` }}
+                          ></div>
+                        </div>
+                        <span className={`text-xs font-semibold w-12 text-right ${vol.assignedCount > vol.capacity ? 'text-red-600' : 'text-slate-500'}`}>
+                          {Math.round(vol.percentage)}%
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedVolunteerId === vol.id && (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-4 bg-slate-50">
+                        <div className="space-y-2">
+                          <h4 className="font-semibold text-slate-700 mb-3">Assigned Shifts for {vol.name}</h4>
+                          {vol.assignedShifts && vol.assignedShifts.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {vol.assignedShifts.map(shift => {
+                                const shiftDate = new Date(shift.date);
+                                const formattedDate = shiftDate.toLocaleDateString('en-US', {
+                                  weekday: 'short',
+                                  month: 'short',
+                                  day: 'numeric'
+                                });
+                                const location = shift.location || 'BOTH';
+                                let bgColor = 'bg-purple-100 border-purple-300';
+                                let locationText = 'Both Locations';
+                                if (location === 'DIZENGOFF') {
+                                  bgColor = 'bg-orange-100 border-orange-300';
+                                  locationText = 'Dizengoff';
+                                } else if (location === 'HATACHANA') {
+                                  bgColor = 'bg-blue-100 border-blue-300';
+                                  locationText = 'Hatachana';
+                                }
+
+                                return (
+                                  <div key={shift.id} className={`p-3 rounded-lg border ${bgColor}`}>
+                                    <div className="font-medium text-slate-900">{formattedDate}</div>
+                                    <div className="text-sm text-slate-600">{shift.startTime} - {shift.endTime}</div>
+                                    <div className="text-xs text-slate-500 mt-1">{locationText}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-slate-500 italic">No shifts assigned</div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -1878,9 +1939,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                          .map(a => a.volunteerId)
                      );
 
+                     // Get the week start date for the selected shift
+                     const shiftDate = new Date(selectedShiftForDetails.date);
+                     const dayOfWeek = shiftDate.getDay();
+                     const weekStart = new Date(shiftDate);
+                     weekStart.setDate(shiftDate.getDate() - dayOfWeek); // Sunday of the week
+                     const weekEnd = new Date(weekStart);
+                     weekEnd.setDate(weekStart.getDate() + 6); // Saturday of the week
+
+                     // Get volunteers who already have shifts in this week
+                     const volunteersWithShiftsThisWeek = new Set(
+                       generatedAssignments
+                         .filter(a => {
+                           const shift = shifts.find(s => s.id === a.shiftId);
+                           if (!shift) return false;
+                           const assignmentDate = new Date(shift.date);
+                           return assignmentDate >= weekStart && assignmentDate <= weekEnd;
+                         })
+                         .map(a => a.volunteerId)
+                     );
+
                      const availableVolunteers = volunteers
                        .filter(v => v.availabilityStatus === 'Active')
                        .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails)) // Only show volunteers who can work this shift
+                       .filter(v => !volunteersWithShiftsThisWeek.has(v.id)) // Exclude volunteers with shifts in the same week
                        .map(vol => {
                          const capacity = getMonthlyCapacity(vol.frequency);
                          const assignedCount = generatedAssignments.filter(a => {
