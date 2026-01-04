@@ -809,11 +809,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
-    // Check if shift is at capacity (max 5)
+    // Check if shift is at recommended capacity (5) - allow admin to override
     const currentCount = generatedAssignments.filter(a => a.shiftId === shiftId).length;
     if (currentCount >= 5) {
-      alert('This shift is already at maximum capacity (5 volunteers)');
-      return;
+      const confirmed = confirm(
+        `This shift already has ${currentCount} volunteers (recommended maximum is 5).\n\n` +
+        `Are you sure you want to add another volunteer?\n\n` +
+        `Adding more volunteers may result in overcrowding.`
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     // Update local state

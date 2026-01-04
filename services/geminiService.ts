@@ -386,6 +386,11 @@ function scheduleShiftsMultiPass(
         currentAssignedDates.push(shift.date);
         volunteerAssignedDates.set(volunteer.id, currentAssignedDates);
 
+        // Break if we've reached the maximum of 5 volunteers for this shift
+        if (currentAssignees.length >= 5) {
+          break; // Hard limit: no more than 5 volunteers per shift
+        }
+
         // For passes 1-2, prioritize breadth (3 volunteers per shift)
         // After that, continue adding to utilize all capacity
         if (passNumber <= 2 && currentAssignees.length >= 3) {
