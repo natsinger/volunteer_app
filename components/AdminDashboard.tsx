@@ -1013,14 +1013,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </div>
 
                           <div className="space-y-0.5">
-                            {assignees.slice(0, 4).map(v => (
+                            {assignees.slice(0, 6).map(v => (
                               <div key={v.id} className="truncate opacity-80 text-[11px] flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-slate-400"></span>
                                 {v.name}
                               </div>
                             ))}
-                            {count > 4 && (
-                              <div className="text-[10px] opacity-60 italic pl-2">+{count - 4} more</div>
+                            {count > 6 && (
+                              <div className="text-[10px] opacity-60 italic pl-2">+{count - 6} more</div>
                             )}
                              {count === 0 && (
                               <div className="text-[9px] text-red-500 italic">Unassigned</div>

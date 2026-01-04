@@ -323,8 +323,45 @@ function scheduleShiftsMultiPass(
       // Max 5 volunteers per shift
       if (currentAssignees.length >= 5) continue;
 
-      // Try to assign volunteers (in priority order: novices first, experts last)
-      for (const volunteer of currentPassVolunteers) {
+      // Calculate current experience level distribution on this shift
+      const currentSkillLevels = currentAssignees.map(id => {
+        const vol = volunteers.find(v => v.id === id);
+        return vol?.skillLevel || 1;
+      });
+      const noviceCount = currentSkillLevels.filter(s => s === 1).length;
+      const intermediateCount = currentSkillLevels.filter(s => s === 2).length;
+      const experiencedCount = currentSkillLevels.filter(s => s === 3).length;
+
+      // Sort volunteers to prefer those who balance the shift
+      // Priority: If shift has mostly novices, prefer experienced volunteers
+      let volunteersForThisShift = [...currentPassVolunteers];
+      if (currentAssignees.length >= 2) {
+        volunteersForThisShift.sort((a, b) => {
+          // Calculate balance score (higher = better for this shift)
+          const getBalanceScore = (vol: Volunteer) => {
+            let score = 0;
+            // If we have many novices and few experienced, prefer experienced
+            if (noviceCount >= 2 && experiencedCount === 0) {
+              if (vol.skillLevel === 3) score += 10;
+              if (vol.skillLevel === 2) score += 5;
+            }
+            // If we have many experienced and few novices, prefer novices
+            if (experiencedCount >= 2 && noviceCount === 0) {
+              if (vol.skillLevel === 1) score += 10;
+              if (vol.skillLevel === 2) score += 5;
+            }
+            // If balanced or first few assignments, slightly prefer novices (to ensure they get shifts)
+            if (noviceCount === 0 && currentAssignees.length < 2) {
+              if (vol.skillLevel === 1) score += 3;
+            }
+            return score;
+          };
+          return getBalanceScore(b) - getBalanceScore(a);
+        });
+      }
+
+      // Try to assign volunteers with balanced experience levels
+      for (const volunteer of volunteersForThisShift) {
         // Skip if already assigned to this shift
         if (currentAssignees.includes(volunteer.id)) continue;
 
@@ -332,10 +369,11 @@ function scheduleShiftsMultiPass(
         if (!canWorkShift(volunteer, shift)) continue;
 
         // Assign!
+        const skillLabel = volunteer.skillLevel === 1 ? 'NOVICE' : volunteer.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
         assignments.push({
           shiftId: shift.id,
           volunteerId: volunteer.id,
-          reasoning: `Pass ${passNumber}: ${volunteer.name} (skill ${volunteer.skillLevel}) assigned to ${shift.date}`
+          reasoning: `Pass ${passNumber}: ${volunteer.name} (${skillLabel}) assigned to ${shift.date} - Balancing experience levels`
         });
 
         currentAssignees.push(volunteer.id);
