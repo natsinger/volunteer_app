@@ -7,6 +7,7 @@ import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
+import EventModalForm from './EventModalForm';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
@@ -1845,6 +1846,111 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
+        {/* Events Tab */}
+        {activeTab === 'events' && (
+          <div className="max-w-7xl mx-auto animate-fade-in">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Events Management</h2>
+                <p className="text-slate-500 mt-1">Create and manage events visible to all volunteers</p>
+              </div>
+              <button
+                onClick={handleCreateEvent}
+                className="px-4 py-2 bg-pink-600 text-white rounded-lg font-medium hover:bg-pink-700 flex items-center gap-2 transition-colors"
+              >
+                <Plus size={20} /> Create Event
+              </button>
+            </div>
+
+            {events.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-xl">
+                <Calendar size={48} className="mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-medium text-slate-900 mb-2">No events yet</h3>
+                <p className="text-slate-500 mb-6">Create your first event to get started</p>
+                <button
+                  onClick={handleCreateEvent}
+                  className="px-6 py-3 bg-pink-600 text-white rounded-lg font-medium hover:bg-pink-700 inline-flex items-center gap-2"
+                >
+                  <Plus size={20} /> Create Event
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {events.map(event => (
+                  <div
+                    key={event.id}
+                    className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          {event.emoji && <span className="text-2xl">{event.emoji}</span>}
+                          <h3 className="text-lg font-bold text-slate-900">{event.title}</h3>
+                          {event.isPublished ? (
+                            <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded">Published</span>
+                          ) : (
+                            <span className="px-2 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded">Draft</span>
+                          )}
+                        </div>
+
+                        {event.description && (
+                          <p className="text-slate-600 mb-3">{event.description}</p>
+                        )}
+
+                        <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+                          <div className="flex items-center gap-1">
+                            <Clock size={16} />
+                            <span>{event.startTime} - {event.endTime}</span>
+                          </div>
+                          {event.location && (
+                            <div className="flex items-center gap-1">
+                              <MapPin size={16} />
+                              <span>{event.location}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <Calendar size={16} />
+                            {event.isRecurring ? (
+                              <span>Recurring: {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][event.recurrenceDayOfWeek || 0]}</span>
+                            ) : (
+                              <span>{event.date}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 ml-4">
+                        <button
+                          onClick={() => handleToggleEventPublish(event)}
+                          className={`px-3 py-1.5 rounded-lg font-medium text-sm transition-colors ${
+                            event.isPublished
+                              ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              : 'bg-green-100 text-green-700 hover:bg-green-200'
+                          }`}
+                        >
+                          {event.isPublished ? 'Unpublish' : 'Publish'}
+                        </button>
+                        <button
+                          onClick={() => handleEditEvent(event)}
+                          className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                        >
+                          <Edit2 size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteEvent(event.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Switch Requests Tab */}
         {activeTab === 'switchRequests' && (
           <div className="max-w-7xl mx-auto animate-fade-in">
@@ -2547,6 +2653,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {saveMode === 'update' ? 'Update Schedule' : 'Save Schedule'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Modal */}
+      {showEventModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 relative my-8">
+            <button
+              onClick={() => {
+                setShowEventModal(false);
+                setEditingEvent(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Calendar size={24} className="text-pink-600" /> {editingEvent ? 'Edit Event' : 'Create New Event'}
+              </h2>
+              <p className="text-sm text-slate-500 mt-2">
+                Events will be visible to all volunteers once published
+              </p>
+            </div>
+
+            <EventModalForm
+              event={editingEvent}
+              onSave={() => {
+                setShowEventModal(false);
+                setEditingEvent(null);
+                loadEvents();
+              }}
+              onCancel={() => {
+                setShowEventModal(false);
+                setEditingEvent(null);
+              }}
+            />
           </div>
         </div>
       )}
