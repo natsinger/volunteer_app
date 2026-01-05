@@ -103,6 +103,32 @@ export interface ShiftSwitchRequest {
   resolvedBy: string | null;
 }
 
+export interface Event {
+  id: string;
+  title: string;
+  description?: string;
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  location?: string;
+  emoji?: string;
+  imageUrl?: string;
+
+  // Date/Recurrence fields
+  isRecurring: boolean;
+  date?: string; // YYYY-MM-DD for one-time events
+  recurrenceDayOfWeek?: number; // 0 = Sunday, 6 = Saturday (for recurring events)
+  recurrenceStartDate?: string; // YYYY-MM-DD when recurring pattern starts
+  recurrenceEndDate?: string; // YYYY-MM-DD when recurring pattern ends
+
+  // Publishing
+  isPublished: boolean;
+
+  // Metadata
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppState {
   volunteers: Volunteer[];
   shifts: Shift[];

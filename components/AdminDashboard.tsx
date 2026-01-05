@@ -3,7 +3,7 @@ import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
 } from 'lucide-react';
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event } from '../types';
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
@@ -15,6 +15,7 @@ import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignmen
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
+import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent } from '../services/eventService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -38,7 +39,7 @@ const DAYS = [
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   volunteers, shifts, setVolunteers, setShifts
 }) => {
-  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto' | 'switchRequests' | 'pendingUsers'>('volunteers');
+  const [activeTab, setActiveTab] = useState<'volunteers' | 'shifts' | 'auto' | 'events' | 'switchRequests' | 'pendingUsers'>('volunteers');
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
@@ -78,6 +79,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [saveMode, setSaveMode] = useState<'create' | 'update'>('create');
   const [selectedScheduleToUpdate, setSelectedScheduleToUpdate] = useState<string | null>(null);
 
+  // Events State
+  const [events, setEvents] = useState<Event[]>([]);
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+
   // Auto-Scheduler State: Default to Next Month
   const today = new Date();
   const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -91,6 +97,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     loadScheduleHistory();
     loadSwitchRequests();
     loadPendingUsers();
+    loadEvents();
   }, []);
 
   // Note: Removed automatic schedule loading to allow manual selection from saved schedules list
@@ -560,6 +567,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Events Functions
+  const loadEvents = async () => {
+    const result = await loadAllEvents();
+    if (result.success && result.events) {
+      setEvents(result.events);
+    }
+  };
+
+  const handleCreateEvent = () => {
+    setEditingEvent(null);
+    setShowEventModal(true);
+  };
+
+  const handleEditEvent = (event: Event) => {
+    setEditingEvent(event);
+    setShowEventModal(true);
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!confirm('Are you sure you want to delete this event?')) {
+      return;
+    }
+
+    const result = await deleteEvent(eventId);
+    if (result.success) {
+      alert('Event deleted successfully');
+      loadEvents();
+    } else {
+      alert(`Failed to delete event: ${result.error}`);
+    }
+  };
+
+  const handleToggleEventPublish = async (event: Event) => {
+    const result = event.isPublished
+      ? await unpublishEvent(event.id)
+      : await publishEvent(event.id);
+
+    if (result.success) {
+      alert(`Event ${event.isPublished ? 'unpublished' : 'published'} successfully`);
+      loadEvents();
+    } else {
+      alert(`Failed to ${event.isPublished ? 'unpublish' : 'publish'} event: ${result.error}`);
+    }
+  };
+
   const loadLastScheduleForMonth = async () => {
     const result = await getLatestScheduleForMonth(targetMonth, targetYear);
     if (result.success && result.schedule && result.assignments) {
@@ -1021,7 +1073,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               if (!day) return <div key={`empty-${idx}`} className="bg-white min-h-[200px]" />;
 
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const daysShifts = shifts.filter(s => s.date === dateStr);
+              const daysShifts = shifts.filter(s => s.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
 
               return (
                 <div key={day} className="bg-white min-h-[200px] p-3 hover:bg-slate-50 transition-colors flex flex-col">
@@ -1294,6 +1346,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'auto' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
             >
               <Sparkles size={16} /> <span className="hidden sm:inline">Auto-Schedule</span><span className="sm:hidden">Auto</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('events')}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all whitespace-nowrap text-sm ${activeTab === 'events' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              <Calendar size={16} /> Events
             </button>
             <button
               onClick={() => setActiveTab('switchRequests')}
