@@ -898,10 +898,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const filteredVolunteers = volunteers.filter(v =>
-    v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.role.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredVolunteers = volunteers
+    .filter(v =>
+      v.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      v.role.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically by name
 
   // Helper function to check if volunteer updated preferences in last 7 days
   const wasRecentlyUpdated = (updatedAt?: string): boolean => {
