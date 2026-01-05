@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
+import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
@@ -75,6 +75,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [showSaveScheduleModal, setShowSaveScheduleModal] = useState(false);
   const [scheduleNameInput, setScheduleNameInput] = useState('');
   const [scheduleNotesInput, setScheduleNotesInput] = useState('');
+  const [saveMode, setSaveMode] = useState<'create' | 'update'>('create');
+  const [selectedScheduleToUpdate, setSelectedScheduleToUpdate] = useState<string | null>(null);
 
   // Auto-Scheduler State: Default to Next Month
   const today = new Date();
@@ -740,14 +742,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
-    const result = await saveSchedule(
-      scheduleNameInput,
-      targetMonth,
-      targetYear,
-      generatedAssignments,
-      scheduleNotesInput,
-      assignmentsApplied // Schedule is published only if assignments were applied
-    );
+    if (saveMode === 'update' && !selectedScheduleToUpdate) {
+      alert('Please select a schedule to update');
+      return;
+    }
+
+    let result;
+    if (saveMode === 'update' && selectedScheduleToUpdate) {
+      // Update existing schedule
+      result = await updateSchedule(
+        selectedScheduleToUpdate,
+        scheduleNameInput,
+        generatedAssignments,
+        scheduleNotesInput,
+        assignmentsApplied
+      );
+    } else {
+      // Create new schedule
+      result = await saveSchedule(
+        scheduleNameInput,
+        targetMonth,
+        targetYear,
+        generatedAssignments,
+        scheduleNotesInput,
+        assignmentsApplied
+      );
+    }
 
     if (result.success && result.scheduleId) {
       // Send email notifications to all volunteers in the schedule
@@ -759,17 +779,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       );
 
       if (notificationResult.success) {
-        alert(`Schedule saved successfully! Notifications sent to ${notificationResult.emailsSent} volunteer${notificationResult.emailsSent !== 1 ? 's' : ''}.`);
+        const action = saveMode === 'update' ? 'updated' : 'saved';
+        alert(`Schedule ${action} successfully! Notifications sent to ${notificationResult.emailsSent} volunteer${notificationResult.emailsSent !== 1 ? 's' : ''}.`);
       } else {
-        alert(`Schedule saved successfully, but failed to send notifications: ${notificationResult.error}`);
+        const action = saveMode === 'update' ? 'updated' : 'saved';
+        alert(`Schedule ${action} successfully, but failed to send notifications: ${notificationResult.error}`);
       }
 
       setShowSaveScheduleModal(false);
       setScheduleNameInput('');
       setScheduleNotesInput('');
+      setSaveMode('create');
+      setSelectedScheduleToUpdate(null);
       loadScheduleHistory();
     } else {
-      alert(`Failed to save schedule: ${result.error}`);
+      const action = saveMode === 'update' ? 'update' : 'save';
+      alert(`Failed to ${action} schedule: ${result.error}`);
     }
   };
 
@@ -883,6 +908,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleRemoveVolunteerFromShift = async (shiftId: string, volunteerId: string) => {
+    console.log('[AdminDashboard] Removing volunteer from shift:', { shiftId, volunteerId });
+
     // Update local state
     setGeneratedAssignments(prev =>
       prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
@@ -890,11 +917,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     // Update database
     const result = await dbRemoveVolunteerFromShift(shiftId, volunteerId);
+    console.log('[AdminDashboard] Remove result:', result);
+
     if (!result.success) {
-      console.error('Failed to remove volunteer from shift in database:', result.error);
+      console.error('[AdminDashboard] Failed to remove volunteer from shift in database:', result.error);
       // Rollback local state
       setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
-      alert('Failed to remove volunteer. Please try again.');
+      alert(`Failed to remove volunteer from database: ${result.error || 'Unknown error'}`);
+    } else {
+      console.log('[AdminDashboard] Successfully removed volunteer from shift_assignments table');
     }
   };
 
@@ -1658,7 +1689,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             <div>
                               <div className="font-medium text-slate-900">{schedule.name}</div>
                               <div className="text-xs text-slate-500">
-                                {new Date(schedule.createdAt).toLocaleDateString()} • {schedule.assignmentCount} assignments
+                                {new Date(schedule.createdAt).toLocaleDateString()}
+                                {schedule.isPublished && <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">Published</span>}
                               </div>
                             </div>
                             <button
@@ -2348,6 +2380,63 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             <div className="space-y-4">
+              {/* Mode Selection */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Save Mode</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSaveMode('create')}
+                    className={`flex-1 p-2 rounded-lg border-2 transition-colors ${
+                      saveMode === 'create'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-medium">Create New</div>
+                    <div className="text-xs opacity-70">Save as new schedule</div>
+                  </button>
+                  <button
+                    onClick={() => setSaveMode('update')}
+                    className={`flex-1 p-2 rounded-lg border-2 transition-colors ${
+                      saveMode === 'update'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-medium">Update Existing</div>
+                    <div className="text-xs opacity-70">Overwrite a schedule</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Show schedule selector when in update mode */}
+              {saveMode === 'update' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Select Schedule to Update</label>
+                  <select
+                    className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                    value={selectedScheduleToUpdate || ''}
+                    onChange={(e) => {
+                      setSelectedScheduleToUpdate(e.target.value);
+                      const selected = savedSchedules.find(s => s.id === e.target.value);
+                      if (selected) {
+                        setScheduleNameInput(selected.name);
+                        setScheduleNotesInput(selected.notes || '');
+                      }
+                    }}
+                  >
+                    <option value="">-- Select a schedule --</option>
+                    {savedSchedules
+                      .filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear)
+                      .map(schedule => (
+                        <option key={schedule.id} value={schedule.id}>
+                          {schedule.name} ({new Date(schedule.createdAt).toLocaleDateString()})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Schedule Name</label>
                 <input
@@ -2356,6 +2445,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   value={scheduleNameInput}
                   onChange={(e) => setScheduleNameInput(e.target.value)}
                   placeholder={`Schedule for ${targetMonth}/${targetYear}`}
+                  disabled={saveMode === 'update' && !selectedScheduleToUpdate}
                 />
               </div>
 
@@ -2394,8 +2484,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <button
                 onClick={handleSaveSchedule}
                 className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700"
+                disabled={saveMode === 'update' && !selectedScheduleToUpdate}
               >
-                Save Schedule
+                {saveMode === 'update' ? 'Update Schedule' : 'Save Schedule'}
               </button>
             </div>
           </div>

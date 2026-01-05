@@ -4,7 +4,15 @@
       "Bash(gh pr list:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(npm install:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(npx supabase db execute:*)",
+      "Bash(node debug-volunteer-assignments.js:*)",
+      "Bash(node debug-volunteer-assignments.cjs:*)",
+      "Bash(git push:*)"
     ]
   }
 }

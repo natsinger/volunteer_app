@@ -103,6 +103,72 @@ export const saveSchedule = async (
 };
 
 /**
+ * Update an existing schedule with new assignments
+ * @param scheduleId - The ID of the schedule to update
+ * @param name - Updated schedule name
+ * @param assignments - New assignments to replace old ones
+ * @param notes - Updated notes
+ * @param isPublished - Whether the schedule should be published
+ */
+export const updateSchedule = async (
+  scheduleId: string,
+  name: string,
+  assignments: { shiftId: string; volunteerId: string }[],
+  notes?: string,
+  isPublished: boolean = false
+): Promise<{ success: boolean; scheduleId?: string; error?: string }> => {
+  try {
+    // Update the schedule metadata
+    const { error: scheduleError } = await supabase
+      .from('saved_schedules')
+      .update({
+        name,
+        notes,
+        is_published: isPublished,
+      })
+      .eq('id', scheduleId);
+
+    if (scheduleError) {
+      console.error('Error updating schedule:', scheduleError);
+      return { success: false, error: scheduleError.message };
+    }
+
+    // Delete old assignments
+    const { error: deleteError } = await supabase
+      .from('saved_schedule_assignments')
+      .delete()
+      .eq('schedule_id', scheduleId);
+
+    if (deleteError) {
+      console.error('Error deleting old assignments:', deleteError);
+      return { success: false, error: deleteError.message };
+    }
+
+    // Insert new assignments
+    const assignmentRecords = assignments.map((a) => ({
+      schedule_id: scheduleId,
+      shift_id: a.shiftId,
+      volunteer_id: a.volunteerId,
+      created_at: new Date().toISOString(),
+    }));
+
+    const { error: assignmentsError } = await supabase
+      .from('saved_schedule_assignments')
+      .insert(assignmentRecords);
+
+    if (assignmentsError) {
+      console.error('Error saving new assignments:', assignmentsError);
+      return { success: false, error: assignmentsError.message };
+    }
+
+    return { success: true, scheduleId };
+  } catch (error: any) {
+    console.error('Unexpected error updating schedule:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+};
+
+/**
  * Load all saved schedules (for admins)
  */
 export const loadSavedSchedules = async (): Promise<{
