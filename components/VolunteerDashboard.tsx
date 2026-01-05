@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload } from 'lucide-react';
-import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment } from '../types';
+import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
 import { loadPublishedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
+import { loadPublishedEvents } from '../services/eventService';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
@@ -85,6 +86,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [scheduleShifts, setScheduleShifts] = useState<Shift[]>([]);
   const [scheduleAssignments, setScheduleAssignments] = useState<SavedScheduleAssignment[]>([]);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
+
+  // Events state
+  const [publishedEvents, setPublishedEvents] = useState<Event[]>([]);
 
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
@@ -205,6 +209,18 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     }
   };
 
+  const loadEvents = async () => {
+    try {
+      const result = await loadPublishedEvents();
+      if (result.success && result.events) {
+        setPublishedEvents(result.events);
+        console.log('[VolunteerDashboard] Loaded', result.events.length, 'published events');
+      }
+    } catch (error) {
+      console.error('Error loading published events:', error);
+    }
+  };
+
   const loadScheduleDetails = async (schedule: SavedSchedule) => {
     setIsLoadingSchedule(true);
     setSelectedSchedule(schedule);
@@ -261,8 +277,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   // Load monthly schedules when tab switches to monthly-schedule
   useEffect(() => {
-    if (activeTab === 'monthly-schedule' && monthlySchedules.length === 0) {
-      loadMonthlySchedules();
+    if (activeTab === 'monthly-schedule') {
+      if (monthlySchedules.length === 0) {
+        loadMonthlySchedules();
+      }
+      if (publishedEvents.length === 0) {
+        loadEvents();
+      }
     }
   }, [activeTab]);
 
@@ -1169,6 +1190,27 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                           const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                           const dayShifts = scheduleShifts.filter(s => s.date === dateStr);
 
+                          // Filter events for this date
+                          const dayEvents = publishedEvents.filter(event => {
+                            if (event.isRecurring) {
+                              // Check if this date falls on the recurring day
+                              const date = new Date(dateStr);
+                              const dayOfWeek = date.getDay();
+
+                              // Check if day matches
+                              if (dayOfWeek !== event.recurrenceDayOfWeek) return false;
+
+                              // Check if within recurrence date range
+                              if (event.recurrenceStartDate && dateStr < event.recurrenceStartDate) return false;
+                              if (event.recurrenceEndDate && dateStr > event.recurrenceEndDate) return false;
+
+                              return true;
+                            } else {
+                              // One-time event
+                              return event.date === dateStr;
+                            }
+                          });
+
                           return (
                             <div key={day} className="bg-white min-h-[80px] sm:min-h-[120px] p-1 sm:p-2 flex flex-col">
                               <div className="text-xs sm:text-sm font-bold text-slate-400 mb-1">{day}</div>
@@ -1243,6 +1285,32 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                     </div>
                                   );
                                 })}
+
+                                {/* Render Events */}
+                                {dayEvents.map(event => (
+                                  <div
+                                    key={event.id}
+                                    className="p-1 sm:p-1.5 rounded border border-green-300 bg-green-50 text-xs cursor-pointer hover:shadow-sm transition-shadow"
+                                    title={`${event.title}${event.description ? ': ' + event.description : ''}\n${event.startTime}-${event.endTime}${event.location ? '\n' + event.location : ''}`}
+                                  >
+                                    <div className="flex items-center gap-1 mb-0.5">
+                                      {event.emoji && (
+                                        <span className="text-sm flex-shrink-0">{event.emoji}</span>
+                                      )}
+                                      <span className="font-semibold truncate text-[10px] sm:text-xs text-green-800">
+                                        {event.startTime.slice(0,5)}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] sm:text-xs text-green-700 font-medium truncate">
+                                      {event.title}
+                                    </div>
+                                    {event.location && (
+                                      <div className="text-[8px] sm:text-[10px] text-green-600 truncate mt-0.5">
+                                        {event.location}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           );
@@ -1256,6 +1324,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                   <p className="text-xs text-slate-500 text-center">
                     Click on any shift to see who's working. Your shifts are highlighted with a purple ring.
+                    <span className="block mt-1">Events are shown in green with emoji icons.</span>
                   </p>
                 </div>
               </div>
