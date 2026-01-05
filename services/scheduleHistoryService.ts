@@ -258,6 +258,55 @@ export const deleteSchedulesForMonth = async (
 };
 
 /**
+ * Unpublish all existing schedules for a specific month/year
+ * This is used when applying a new schedule to ensure only the latest one is visible to volunteers
+ */
+export const unpublishPreviousSchedules = async (
+  targetMonth: number,
+  targetYear: number
+): Promise<{ success: boolean; unpublishedCount: number; error?: string }> => {
+  try {
+    // First get all published schedules for this month to count them
+    const { data: schedules, error: fetchError } = await supabase
+      .from('saved_schedules')
+      .select('id')
+      .eq('target_month', targetMonth)
+      .eq('target_year', targetYear)
+      .eq('is_published', true);
+
+    if (fetchError) {
+      console.error('Error fetching schedules to unpublish:', fetchError);
+      return { success: false, unpublishedCount: 0, error: fetchError.message };
+    }
+
+    const count = schedules?.length || 0;
+
+    if (count === 0) {
+      return { success: true, unpublishedCount: 0 };
+    }
+
+    // Unpublish all schedules for this month
+    const { error } = await supabase
+      .from('saved_schedules')
+      .update({ is_published: false })
+      .eq('target_month', targetMonth)
+      .eq('target_year', targetYear)
+      .eq('is_published', true);
+
+    if (error) {
+      console.error('Error unpublishing schedules for month:', error);
+      return { success: false, unpublishedCount: 0, error: error.message };
+    }
+
+    console.log(`[ScheduleHistoryService] Unpublished ${count} previous schedule(s) for ${targetMonth}/${targetYear}`);
+    return { success: true, unpublishedCount: count };
+  } catch (error: any) {
+    console.error('Unexpected error unpublishing schedules for month:', error);
+    return { success: false, unpublishedCount: 0, error: error.message || 'Unknown error' };
+  }
+};
+
+/**
  * Get the most recent saved schedule for a specific month/year
  */
 export const getLatestScheduleForMonth = async (

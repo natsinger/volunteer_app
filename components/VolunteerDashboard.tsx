@@ -97,7 +97,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     try {
       console.log('[VolunteerDashboard] Loading assignments for volunteer:', currentUser.id);
       const assignments = await getVolunteerAssignments(currentUser.id);
-      console.log('[VolunteerDashboard] Received assignments:', assignments);
+      console.log('[VolunteerDashboard] Received', assignments.length, 'assignments from shift_assignments table');
+      console.log('[VolunteerDashboard] My shift IDs from shift_assignments:', assignments.map(a => a.shiftId));
       setMyAssignments(assignments);
 
       // Load coworkers for all shifts
@@ -181,10 +182,14 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       // Load only published schedules (visible after Apply to Database)
       const result = await loadPublishedSchedules();
       if (result.success && result.schedules) {
-        // Sort by date (most recent first)
+        // Sort by date (most recent first), with creation date as tiebreaker for same month/year
         const sorted = result.schedules.sort((a, b) => {
+          // Primary sort: year (most recent first)
           if (a.targetYear !== b.targetYear) return b.targetYear - a.targetYear;
-          return b.targetMonth - a.targetMonth;
+          // Secondary sort: month (most recent first)
+          if (a.targetMonth !== b.targetMonth) return b.targetMonth - a.targetMonth;
+          // Tertiary sort: creation date (most recent first) for same month/year
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
         setMonthlySchedules(sorted);
 
@@ -204,10 +209,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     setIsLoadingSchedule(true);
     setSelectedSchedule(schedule);
     try {
+      console.log('[VolunteerDashboard] Loading schedule details for:', schedule.name, '(ID:', schedule.id, ')');
+
       // Load assignments for this schedule
       const assignmentsResult = await loadScheduleAssignments(schedule.id);
+      console.log('[VolunteerDashboard] Loaded', assignmentsResult.assignments?.length || 0, 'total assignments from saved_schedule_assignments');
+
       if (assignmentsResult.success && assignmentsResult.assignments) {
         setScheduleAssignments(assignmentsResult.assignments);
+
+        // Debug: Show this volunteer's assignments from this schedule
+        const myAssignmentsFromSchedule = assignmentsResult.assignments.filter(a => a.volunteerId === currentUser.id);
+        console.log('[VolunteerDashboard] My assignments from this schedule:', myAssignmentsFromSchedule.length);
+        console.log('[VolunteerDashboard] My shift IDs from saved_schedule_assignments:', myAssignmentsFromSchedule.map(a => a.shiftId));
 
         // Get unique shift IDs
         const shiftIds = [...new Set(assignmentsResult.assignments.map(a => a.shiftId))];
@@ -226,6 +240,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               return a.startTime.localeCompare(b.startTime);
             });
             setScheduleShifts(shifts);
+
+            // Debug: Show which shifts are assigned to this volunteer in the monthly schedule
+            const myShiftIdsFromSchedule = new Set(myAssignmentsFromSchedule.map(a => a.shiftId));
+            const myScheduleShifts = shifts.filter(s => myShiftIdsFromSchedule.has(s.id));
+            console.log('[VolunteerDashboard] My shifts in monthly schedule view:');
+            myScheduleShifts.forEach(s => console.log(`  - ${s.date}: ${s.title} (${s.startTime} - ${s.endTime})`));
 
             // Load coworkers for all shifts
             await loadAllCoworkers(shiftIds);
@@ -440,6 +460,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     .sort((a, b) => a.date.localeCompare(b.date));
 
   console.log('[VolunteerDashboard] Filtered my shifts:', myShifts.length, 'shifts');
+  console.log('[VolunteerDashboard] My shifts from shift_assignments (My Shifts tab):');
+  myShifts.forEach(s => console.log(`  - ${s.date}: ${s.title} (${s.startTime} - ${s.endTime})`));
 
   // Helper function to check if volunteer can work a shift
   const canWorkShift = (shift: Shift): boolean => {

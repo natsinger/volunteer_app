@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications } from '../services/scheduleHistoryService';
+import { saveSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
@@ -604,7 +604,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     setIsApplyingAssignments(true);
     try {
-      // Get ALL shift IDs that will be affected (from both displayed shifts and assignments)
+      // Step 1: Unpublish any previous schedules for this month
+      console.log('[AdminDashboard] Unpublishing previous schedules for', targetMonth, targetYear);
+      const unpublishResult = await unpublishPreviousSchedules(targetMonth, targetYear);
+
+      if (!unpublishResult.success) {
+        alert(`Failed to unpublish previous schedules: ${unpublishResult.error}`);
+        setIsApplyingAssignments(false);
+        return;
+      }
+
+      if (unpublishResult.unpublishedCount > 0) {
+        console.log('[AdminDashboard] Unpublished', unpublishResult.unpublishedCount, 'previous schedule(s)');
+      }
+
+      // Step 2: Get ALL shift IDs that will be affected (from both displayed shifts and assignments)
       const displayedShiftIds = new Set(displayedShifts.map(s => s.id));
       const assignmentShiftIds = new Set(generatedAssignments.map(a => a.shiftId));
       const allShiftIds = [...new Set([...displayedShiftIds, ...assignmentShiftIds])];
@@ -614,7 +628,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       console.log('[AdminDashboard] Assignment shifts:', assignmentShiftIds.size);
       console.log('[AdminDashboard] Total unique shifts to clear:', allShiftIds.length);
 
-      // First, clear existing assignments for all these shifts to avoid duplicates
+      // Step 3: Clear existing assignments for all these shifts to avoid duplicates
       const clearResult = await clearMonthAssignments(allShiftIds);
 
       if (!clearResult.success) {
@@ -625,15 +639,48 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       console.log('[AdminDashboard] Cleared', clearResult.deletedCount, 'existing assignments');
 
-      // Now apply the new assignments
+      // Step 4: Apply the new assignments
       const result = await applyScheduleAssignments(generatedAssignments);
 
-      if (result.success) {
-        alert(`Assignments applied successfully!\n\nCleared ${clearResult.deletedCount || 0} old assignment(s)\nApplied ${generatedAssignments.length} new assignment(s)\n\nVolunteers can now see their shifts.`);
-        setAssignmentsApplied(true);
-      } else {
+      if (!result.success) {
         alert(`Failed to apply assignments: ${result.error}`);
+        setIsApplyingAssignments(false);
+        return;
       }
+
+      // Step 5: Automatically save the schedule with a timestamp-based name and publish it
+      const monthName = new Date(targetYear, targetMonth - 1).toLocaleString('en-US', { month: 'long' });
+      const timestamp = new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      const scheduleName = `${monthName} ${targetYear} Schedule - Applied ${timestamp}`;
+
+      console.log('[AdminDashboard] Auto-saving schedule as:', scheduleName);
+      const saveResult = await saveSchedule(
+        scheduleName,
+        targetMonth,
+        targetYear,
+        generatedAssignments,
+        'Automatically created when Apply to Database was clicked',
+        true // is_published = true
+      );
+
+      if (!saveResult.success) {
+        console.error('[AdminDashboard] Failed to auto-save schedule:', saveResult.error);
+        // Don't fail the whole operation - assignments are already applied
+        alert(`Assignments applied successfully!\n\nCleared ${clearResult.deletedCount || 0} old assignment(s)\nApplied ${generatedAssignments.length} new assignment(s)\n\nWarning: Failed to save schedule to history: ${saveResult.error}\n\nVolunteers can now see their shifts.`);
+      } else {
+        console.log('[AdminDashboard] Schedule auto-saved with ID:', saveResult.scheduleId);
+        alert(`Assignments applied successfully!\n\nCleared ${clearResult.deletedCount || 0} old assignment(s)\nApplied ${generatedAssignments.length} new assignment(s)\nSchedule saved as: "${scheduleName}"\n\nVolunteers can now see their shifts and the schedule in their Monthly Schedule tab.`);
+        // Reload schedule history to show the new schedule
+        loadScheduleHistory();
+      }
+
+      setAssignmentsApplied(true);
     } catch (err) {
       console.error('Exception applying assignments:', err);
       alert('An error occurred while applying assignments');
