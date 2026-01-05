@@ -17,6 +17,7 @@ import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as d
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
 import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent } from '../services/eventService';
+import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -50,6 +51,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Volunteer Management State
   const [searchTerm, setSearchTerm] = useState('');
+  const [statsSearchTerm, setStatsSearchTerm] = useState('');
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
   const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
@@ -241,6 +243,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId
       }));
       setGeneratedAssignments(assignments);
+      // Capture initial state for change detection
+      setInitialAssignments([...assignments]);
       setSelectedOptionId(optionId);
       setShowOptionsModal(false);
       setScheduleResultView('calendar');
@@ -251,6 +255,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
   const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
   const [assignmentsApplied, setAssignmentsApplied] = useState(false);
+  const [initialAssignments, setInitialAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
 
   // Multiple schedule options state
   const [scheduleOptions, setScheduleOptions] = useState<Array<{
@@ -736,6 +741,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       setAssignmentsApplied(true);
+      // Capture initial state after applying for change detection
+      setInitialAssignments([...generatedAssignments]);
     } catch (err) {
       console.error('Exception applying assignments:', err);
       alert('An error occurred while applying assignments');
@@ -823,20 +830,36 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     if (result.success && result.scheduleId) {
-      // Send email notifications to all volunteers in the schedule
-      const notificationResult = await sendScheduleNotifications(
-        result.scheduleId,
-        scheduleNameInput,
-        targetMonth,
-        targetYear
-      );
+      // Detect shift changes and send notifications to affected volunteers
+      let changeNotificationsSent = 0;
+      try {
+        const changeResult = await sendShiftChangeNotifications(
+          initialAssignments,
+          generatedAssignments,
+          displayedShifts,
+          volunteers
+        );
 
-      if (notificationResult.success) {
-        const action = saveMode === 'update' ? 'updated' : 'saved';
-        alert(`Schedule ${action} successfully! Notifications sent to ${notificationResult.emailsSent} volunteer${notificationResult.emailsSent !== 1 ? 's' : ''}.`);
+        if (changeResult.success) {
+          changeNotificationsSent = changeResult.emailsSent;
+          if (changeResult.emailsSent > 0) {
+            console.log(`✓ Sent ${changeResult.emailsSent} shift change notification(s)`);
+          }
+        } else if (changeResult.errors.length > 0) {
+          console.warn('Some shift change notifications failed:', changeResult.errors);
+        }
+      } catch (error) {
+        console.error('Error sending shift change notifications:', error);
+      }
+
+      // Update initial assignments to current state for future comparisons
+      setInitialAssignments([...generatedAssignments]);
+
+      const action = saveMode === 'update' ? 'updated' : 'saved';
+      if (changeNotificationsSent > 0) {
+        alert(`Schedule ${action} successfully!\n\nSent ${changeNotificationsSent} shift change notification${changeNotificationsSent !== 1 ? 's' : ''} to affected volunteers.`);
       } else {
-        const action = saveMode === 'update' ? 'updated' : 'saved';
-        alert(`Schedule ${action} successfully, but failed to send notifications: ${notificationResult.error}`);
+        alert(`Schedule ${action} successfully!`);
       }
 
       setShowSaveScheduleModal(false);
@@ -859,6 +882,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId: a.volunteerId,
       }));
       setGeneratedAssignments(assignments);
+      // Capture initial state for change detection
+      setInitialAssignments([...assignments]);
       setScheduleResultView('calendar');
       setShowScheduleHistory(false);
 
@@ -1151,10 +1176,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                              </span>
                           </div>
 
-                          <div className="space-y-0.5">
+                          <div className="space-y-1">
                             {assignees.slice(0, 6).map(v => (
-                              <div key={v.id} className="truncate opacity-80 text-[11px] flex items-center gap-1">
-                                <span className="w-1 h-1 rounded-full bg-slate-400"></span>
+                              <div key={v.id} className="truncate opacity-90 text-[15px] font-medium flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                                 {v.name}
                               </div>
                             ))}
@@ -1204,11 +1229,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         percentage,
         assignedShifts
       };
-    }).sort((a, b) => b.percentage - a.percentage);
+    }).filter(vol =>
+      vol.name.toLowerCase().includes(statsSearchTerm.toLowerCase()) ||
+      vol.role.toLowerCase().includes(statsSearchTerm.toLowerCase())
+    ).sort((a, b) => b.percentage - a.percentage);
 
     return (
       <div className="animate-fade-in">
-        <h2 className="text-xl font-bold text-slate-900 mb-6">Volunteer Utilization ({targetMonthStr})</h2>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-slate-900">Volunteer Utilization ({targetMonthStr})</h2>
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+            <input
+              type="text"
+              placeholder="Search by name or role..."
+              className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              value={statsSearchTerm}
+              onChange={(e) => setStatsSearchTerm(e.target.value)}
+            />
+          </div>
+        </div>
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
@@ -1226,7 +1266,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="hover:bg-slate-50 cursor-pointer transition-colors"
                     onClick={() => setExpandedVolunteerId(expandedVolunteerId === vol.id ? null : vol.id)}
                   >
-                    <td className="px-6 py-4 font-medium text-slate-900">
+                    <td className="px-6 py-4 text-base font-semibold text-slate-900">
                       <div className="flex items-center gap-2">
                         <ChevronRight
                           size={16}
@@ -1443,7 +1483,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <tr key={vol.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
-                          <div className="font-medium text-slate-900">{vol.name}</div>
+                          <div className="text-base font-semibold text-slate-900">{vol.name}</div>
                           {wasRecentlyUpdated(vol.updatedAt) && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200" title="Updated preferences in the last 7 days">
                               <CheckCircle size={12} className="mr-1" /> Updated
@@ -2002,7 +2042,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                       <div className="bg-slate-50 p-3 rounded-lg mb-3">
                         <p className="text-xs text-slate-500 mb-1">Requested by:</p>
-                        <p className="text-sm font-medium text-slate-900">{requestingVolunteer.name}</p>
+                        <p className="text-base font-semibold text-slate-900">{requestingVolunteer.name}</p>
                         <p className="text-xs text-slate-500">{requestingVolunteer.email}</p>
                       </div>
 
