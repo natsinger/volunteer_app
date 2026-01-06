@@ -197,9 +197,22 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         });
         setMonthlySchedules(sorted);
 
-        // Auto-select the most recent schedule
+        // Smart auto-selection: prioritize current month's schedule
         if (sorted.length > 0 && !selectedSchedule) {
-          await loadScheduleDetails(sorted[0]);
+          const now = new Date();
+          const currentMonth = now.getMonth() + 1; // 1-12
+          const currentYear = now.getFullYear();
+
+          // Try to find a schedule for the current month
+          const currentMonthSchedule = sorted.find(
+            s => s.targetMonth === currentMonth && s.targetYear === currentYear
+          );
+
+          // If found, use current month's schedule, otherwise use the most recent
+          const scheduleToLoad = currentMonthSchedule || sorted[0];
+          await loadScheduleDetails(scheduleToLoad);
+
+          console.log(`[VolunteerDashboard] Auto-selected schedule for ${currentMonthSchedule ? 'current month' : 'most recent'}: ${scheduleToLoad.name}`);
         }
       }
     } catch (error) {
