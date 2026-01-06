@@ -69,6 +69,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Calendar Details State
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
+  const [selectedEventForDetails, setSelectedEventForDetails] = useState<Event | null>(null);
 
   // Delete Confirmation State
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'volunteer' | 'shift', id: string, name?: string } | null>(null);
@@ -1041,17 +1042,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const CalendarView = () => {
     const year = targetYear;
-    const month = targetMonth - 1; 
-    
+    const month = targetMonth - 1;
+
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const daysInMonth = lastDay.getDate();
-    const startDayOffset = firstDay.getDay(); 
+    const startDayOffset = firstDay.getDay();
     const monthName = firstDay.toLocaleString('default', { month: 'long', year: 'numeric' });
 
     const days: (number | null)[] = [];
     for (let i = 0; i < startDayOffset; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
+
+    // Filter published events for display
+    const publishedEvents = events.filter(e => e.isPublished);
 
     return (
       <div className="animate-fade-in">
@@ -1100,6 +1104,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
               const daysShifts = shifts.filter(s => s.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+              // Filter events for this date
+              const dayEvents = publishedEvents.filter(event => {
+                if (event.isRecurring) {
+                  // Check if this date falls on the recurring day
+                  const date = new Date(dateStr);
+                  const dayOfWeek = date.getDay();
+
+                  // Check if day matches
+                  if (dayOfWeek !== event.recurrenceDayOfWeek) return false;
+
+                  // Check if within recurrence date range
+                  if (event.recurrenceStartDate && dateStr < event.recurrenceStartDate) return false;
+                  if (event.recurrenceEndDate && dateStr > event.recurrenceEndDate) return false;
+
+                  return true;
+                } else {
+                  // One-time event
+                  return event.date === dateStr;
+                }
+              });
 
               return (
                 <div key={day} className="bg-white min-h-[200px] p-3 hover:bg-slate-50 transition-colors flex flex-col">
@@ -1193,6 +1218,33 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       );
                     })}
+
+                    {/* Render Events */}
+                    {dayEvents.map(event => (
+                      <div
+                        key={event.id}
+                        onClick={() => setSelectedEventForDetails(event)}
+                        className="cursor-pointer p-2 rounded border border-green-300 bg-green-50 text-xs hover:shadow-md transition-shadow"
+                        title={`${event.title}${event.description ? ': ' + event.description : ''}\n${event.startTime}-${event.endTime}${event.location ? '\n' + event.location : ''}`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          {event.emoji && (
+                            <span className="text-base flex-shrink-0">{event.emoji}</span>
+                          )}
+                          <span className="font-bold text-green-800 text-xs">
+                            {event.startTime.slice(0,5)}
+                          </span>
+                        </div>
+                        <div className="text-xs text-green-700 font-medium truncate">
+                          {event.title}
+                        </div>
+                        {event.location && (
+                          <div className="text-[10px] text-green-600 truncate mt-0.5">
+                            {event.location}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -2541,6 +2593,77 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                  Yes, Delete
                </button>
              </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Details Modal (Read-Only) */}
+      {selectedEventForDetails && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative">
+            <button
+              onClick={() => setSelectedEventForDetails(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              {selectedEventForDetails.emoji && (
+                <span className="text-4xl">{selectedEventForDetails.emoji}</span>
+              )}
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">{selectedEventForDetails.title}</h2>
+                {selectedEventForDetails.isPublished ? (
+                  <span className="inline-block px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded mt-1">Published</span>
+                ) : (
+                  <span className="inline-block px-2 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded mt-1">Draft</span>
+                )}
+              </div>
+            </div>
+
+            {selectedEventForDetails.description && (
+              <p className="text-slate-600 mb-4">{selectedEventForDetails.description}</p>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-slate-700">
+                <Clock size={18} className="text-slate-400" />
+                <span><strong>Time:</strong> {selectedEventForDetails.startTime} - {selectedEventForDetails.endTime}</span>
+              </div>
+
+              {selectedEventForDetails.location && (
+                <div className="flex items-center gap-2 text-slate-700">
+                  <MapPin size={18} className="text-slate-400" />
+                  <span><strong>Location:</strong> {selectedEventForDetails.location}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 text-slate-700">
+                <Calendar size={18} className="text-slate-400" />
+                {selectedEventForDetails.isRecurring ? (
+                  <span>
+                    <strong>Schedule:</strong> Every {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][selectedEventForDetails.recurrenceDayOfWeek || 0]}
+                    {selectedEventForDetails.recurrenceStartDate && selectedEventForDetails.recurrenceEndDate && (
+                      <span className="text-sm text-slate-500 ml-1">
+                        ({selectedEventForDetails.recurrenceStartDate} to {selectedEventForDetails.recurrenceEndDate})
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span><strong>Date:</strong> {selectedEventForDetails.date}</span>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setSelectedEventForDetails(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

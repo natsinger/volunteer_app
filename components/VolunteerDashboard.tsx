@@ -89,6 +89,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   // Events state
   const [publishedEvents, setPublishedEvents] = useState<Event[]>([]);
+  const [selectedEventForDetails, setSelectedEventForDetails] = useState<Event | null>(null);
 
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
@@ -1303,6 +1304,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                 {dayEvents.map(event => (
                                   <div
                                     key={event.id}
+                                    onClick={() => setSelectedEventForDetails(event)}
                                     className="p-1 sm:p-1.5 rounded border border-green-300 bg-green-50 text-xs cursor-pointer hover:shadow-sm transition-shadow"
                                     title={`${event.title}${event.description ? ': ' + event.description : ''}\n${event.startTime}-${event.endTime}${event.location ? '\n' + event.location : ''}`}
                                   >
@@ -1927,6 +1929,72 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <button
                 onClick={() => setSelectedVolunteerProfile(null)}
                 className="px-6 py-2 border border-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Event Details Modal (Read-Only) */}
+      {selectedEventForDetails && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative">
+            <button
+              onClick={() => setSelectedEventForDetails(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              {selectedEventForDetails.emoji && (
+                <span className="text-4xl">{selectedEventForDetails.emoji}</span>
+              )}
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">{selectedEventForDetails.title}</h2>
+              </div>
+            </div>
+
+            {selectedEventForDetails.description && (
+              <p className="text-slate-600 mb-4">{selectedEventForDetails.description}</p>
+            )}
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-slate-700">
+                <Clock size={18} className="text-slate-400" />
+                <span><strong>Time:</strong> {selectedEventForDetails.startTime} - {selectedEventForDetails.endTime}</span>
+              </div>
+
+              {selectedEventForDetails.location && (
+                <div className="flex items-center gap-2 text-slate-700">
+                  <MapPin size={18} className="text-slate-400" />
+                  <span><strong>Location:</strong> {selectedEventForDetails.location}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 text-slate-700">
+                <Calendar size={18} className="text-slate-400" />
+                {selectedEventForDetails.isRecurring ? (
+                  <span>
+                    <strong>Schedule:</strong> Every {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][selectedEventForDetails.recurrenceDayOfWeek || 0]}
+                    {selectedEventForDetails.recurrenceStartDate && selectedEventForDetails.recurrenceEndDate && (
+                      <span className="text-sm text-slate-500 ml-1">
+                        ({selectedEventForDetails.recurrenceStartDate} to {selectedEventForDetails.recurrenceEndDate})
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span><strong>Date:</strong> {selectedEventForDetails.date}</span>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setSelectedEventForDetails(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
               >
                 Close
               </button>
