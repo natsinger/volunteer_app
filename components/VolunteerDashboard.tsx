@@ -339,7 +339,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     }
   };
 
-  const handleOpenSwitchModal = (shift: Shift) => {
+  const handleOpenSwitchModal = async (shift: Shift) => {
+    // Refresh assignments to ensure we have latest data before showing available shifts
+    await loadMyAssignments();
     setSwitchRequestShift(shift);
     setSelectedShiftIds([]);
     setSwitchMessage('');
@@ -361,6 +363,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
     setIsSubmittingSwitchRequest(true);
     try {
+      // Pre-check: refresh assignments and verify selected shifts aren't already assigned
+      if (selectedShiftIds.length > 0) {
+        const freshAssignments = await getVolunteerAssignments(currentUser.id);
+        const assignedShiftIds = new Set(freshAssignments.map(a => a.shiftId));
+        const alreadyAssigned = selectedShiftIds.filter(id => assignedShiftIds.has(id));
+        if (alreadyAssigned.length > 0) {
+          alert(`You are already assigned to ${alreadyAssigned.length} of the selected shift(s). Please refresh and try again.`);
+          await loadMyAssignments(); // Refresh UI state
+          setIsSubmittingSwitchRequest(false);
+          return;
+        }
+      }
+
       // Remove from current shift
       const removeResult = await removeVolunteerFromShift(switchRequestShift.id, currentUser.id);
       if (!removeResult.success) {
@@ -380,7 +395,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         if (failedAdds.length > 0) {
           // Rollback: add back to original shift
           await addVolunteerToShift(switchRequestShift.id, currentUser.id);
-          alert(`Failed to assign to ${failedAdds.length} shift(s). Switch cancelled.`);
+          const errorDetails = failedAdds.map(r => r.error).filter(Boolean).join('; ');
+          alert(`Failed to assign to ${failedAdds.length} shift(s). Switch cancelled.\n\nError: ${errorDetails || 'Unknown error'}`);
           setIsSubmittingSwitchRequest(false);
           return;
         }
