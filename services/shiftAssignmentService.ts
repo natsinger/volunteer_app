@@ -166,6 +166,7 @@ export const getVolunteerAssignments = async (
 
 /**
  * Add a single volunteer to a shift
+ * Uses upsert to gracefully handle cases where the assignment already exists
  */
 export const addVolunteerToShift = async (
   shiftId: string,
@@ -174,10 +175,13 @@ export const addVolunteerToShift = async (
   try {
     const { error } = await supabase
       .from('shift_assignments')
-      .insert({
+      .upsert({
         shift_id: shiftId,
         volunteer_id: volunteerId,
         status: 'assigned'
+      }, {
+        onConflict: 'shift_id,volunteer_id',
+        ignoreDuplicates: false
       });
 
     if (error) {
