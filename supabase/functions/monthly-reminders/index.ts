@@ -16,25 +16,31 @@ serve(async (req) => {
   }
 
   try {
+    // Check for force parameter
+    const url = new URL(req.url)
+    const force = url.searchParams.get('force') === 'true'
+
     // Create Supabase client with service role key (has admin access)
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Check if it's 7 days before end of month
-    const today = new Date()
-    const currentMonth = today.getMonth()
-    const currentYear = today.getFullYear()
-    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate()
-    const currentDay = today.getDate()
-    const daysUntilEnd = lastDay - currentDay
+    // Check if it's 7 days before end of month (unless forced)
+    if (!force) {
+      const today = new Date()
+      const currentMonth = today.getMonth()
+      const currentYear = today.getFullYear()
+      const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate()
+      const currentDay = today.getDate()
+      const daysUntilEnd = lastDay - currentDay
 
-    if (daysUntilEnd !== 7) {
-      return new Response(
-        JSON.stringify({ message: `Not time to send reminders (${daysUntilEnd} days until end of month)` }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      if (daysUntilEnd !== 7) {
+        return new Response(
+          JSON.stringify({ message: `Not time to send reminders (${daysUntilEnd} days until end of month). Use ?force=true to send anyway.` }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
     }
 
     // Get all active volunteers
@@ -61,8 +67,6 @@ serve(async (req) => {
 
     for (const volunteer of volunteers) {
       try {
-        // Example using Resend (you'll need to install and configure)
-        /*
         const emailResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -70,7 +74,7 @@ serve(async (req) => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            from: 'VolunteerFlow <noreply@yourdomain.com>',
+            from: 'VolunteerFlow <noreply@pnimeet.org.il>',
             to: volunteer.email,
             subject: 'Update Your Volunteer Preferences',
             html: `
@@ -88,11 +92,14 @@ serve(async (req) => {
             `
           })
         })
-        */
 
-        // For now, just log (replace with actual email sending)
-        console.log(`Would send reminder to: ${volunteer.email}`)
-        sentCount++
+        if (!emailResponse.ok) {
+          const errorData = await emailResponse.json()
+          console.error(`Resend API error for ${volunteer.email}:`, errorData)
+        } else {
+          console.log(`Successfully sent reminder to: ${volunteer.email}`)
+          sentCount++
+        }
       } catch (emailError) {
         console.error(`Failed to send email to ${volunteer.email}:`, emailError)
       }
