@@ -1,250 +1,128 @@
 import { Shift } from '../types';
-import { supabase } from './supabase';
+
+/**
+ * Generate a Google Calendar URL that opens the "Add Event" page with pre-filled data
+ * This approach requires NO OAuth, NO API access, NO verification - just opens a URL
+ */
+export function generateGoogleCalendarUrl(shift: Shift): string {
+  // Combine date + time and convert to UTC in YYYYMMDDTHHmmssZ format
+  const toUtcDateTime = (date: string, time: string): string => {
+    // Handle time with or without seconds (HH:mm or HH:mm:ss)
+    const timeParts = time.split(':');
+    const hours = timeParts[0] || '00';
+    const minutes = timeParts[1] || '00';
+    const seconds = timeParts[2] || '00';
+
+    const localDate = new Date(`${date}T${hours}:${minutes}:${seconds}`);
+
+    // Check for invalid date
+    if (isNaN(localDate.getTime())) {
+      console.error('Invalid date/time:', date, time);
+      // Fallback: return current time
+      return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    }
+
+    return localDate
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}/, '');
+  };
+
+  const start = toUtcDateTime(shift.date, shift.startTime);
+  const end = toUtcDateTime(shift.date, shift.endTime);
+
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: shift.title,
+    dates: `${start}/${end}`,
+    location: shift.location ?? '',
+    details: [
+      `Volunteer shift`,
+      shift.requiredSkills?.length
+        ? `Required skills: ${shift.requiredSkills.join(', ')}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+/**
+ * Generate Google Calendar URLs for multiple shifts
+ */
+export function generateGoogleCalendarUrls(shifts: Shift[]): { shift: Shift; url: string }[] {
+  return shifts.map(shift => ({
+    shift,
+    url: generateGoogleCalendarUrl(shift)
+  }));
+}
+
+/**
+ * Open Google Calendar to add a shift (opens in new tab)
+ */
+export function openGoogleCalendarForShift(shift: Shift): void {
+  const url = generateGoogleCalendarUrl(shift);
+  window.open(url, '_blank');
+}
 
 /**
  * Check if the current user signed in with Google
+ * Still useful to show Google-specific features
  */
 export const isGoogleUser = async (): Promise<boolean> => {
   try {
+    const { supabase } = await import('./supabase');
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      console.log('[GoogleCalendar] isGoogleUser: No user found');
-      return false;
-    }
+    if (!user) return false;
 
-    // Check multiple possible locations for provider info
     const appProvider = user.app_metadata?.provider;
-    const issuer = user.user_metadata?.iss;
     const identities = user.identities || [];
     const hasGoogleIdentity = identities.some((id: any) => id.provider === 'google');
 
-    console.log('[GoogleCalendar] isGoogleUser check:', {
-      appProvider,
-      issuer,
-      hasGoogleIdentity,
-      identitiesCount: identities.length
-    });
-
-    // Check if the provider is Google through various means
-    const isGoogle =
-      appProvider === 'google' ||
-      hasGoogleIdentity ||
-      (typeof issuer === 'string' && issuer.includes('google'));
-
-    console.log('[GoogleCalendar] isGoogleUser result:', isGoogle);
-    return isGoogle;
+    return appProvider === 'google' || hasGoogleIdentity;
   } catch (error) {
     console.error('Error checking if user is Google user:', error);
     return false;
   }
 };
 
-/**
- * Get the user's Google access token from Supabase session
- */
-const getGoogleAccessToken = async (): Promise<{ token: string | null; error?: string }> => {
-  try {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError) {
-      console.error('[GoogleCalendar] Session error:', sessionError);
-      return { token: null, error: `Session error: ${sessionError.message}` };
-    }
-
-    if (!session) {
-      console.log('[GoogleCalendar] No session found');
-      return { token: null, error: 'No active session. Please sign in again.' };
-    }
-
-    console.log('[GoogleCalendar] Session found, provider:', session.user?.app_metadata?.provider);
-    console.log('[GoogleCalendar] Provider token exists:', !!session.provider_token);
-    console.log('[GoogleCalendar] Provider refresh token exists:', !!session.provider_refresh_token);
-
-    if (!session.provider_token) {
-      console.log('[GoogleCalendar] No provider token. User may need to re-authenticate with calendar scope.');
-      return {
-        token: null,
-        error: 'No Google Calendar access. Please sign out and sign in again with Google, granting calendar permissions.'
-      };
-    }
-
-    return { token: session.provider_token };
-  } catch (error: any) {
-    console.error('[GoogleCalendar] Error getting access token:', error);
-    return { token: null, error: error.message || 'Failed to get access token' };
-  }
-};
-
-/**
- * Add a shift to Google Calendar
- * @param shift - The shift to add
- * @param location - Optional location details
- * @returns Success status
- */
+// Legacy function - kept for backward compatibility but now just opens URL
 export const addShiftToGoogleCalendar = async (
   shift: Shift,
-  location?: string
+  _location?: string
 ): Promise<{ success: boolean; error?: string }> => {
   try {
-    console.log('[GoogleCalendar] Adding shift to calendar:', shift.title, shift.date);
-    const { token: accessToken, error: tokenError } = await getGoogleAccessToken();
-    if (!accessToken) {
-      console.error('[GoogleCalendar] No access token:', tokenError);
-      return {
-        success: false,
-        error: tokenError || 'No Google access token found. Please sign in with Google to use calendar sync.'
-      };
-    }
-
-    // Parse shift date and times
-    const shiftDate = new Date(shift.date);
-    const [startHour, startMinute] = shift.startTime.split(':').map(Number);
-    const [endHour, endMinute] = shift.endTime.split(':').map(Number);
-
-    // Create start and end datetime
-    const startDateTime = new Date(shiftDate);
-    startDateTime.setHours(startHour, startMinute, 0, 0);
-
-    const endDateTime = new Date(shiftDate);
-    endDateTime.setHours(endHour, endMinute, 0, 0);
-
-    // Create calendar event
-    const event = {
-      summary: shift.title,
-      description: `Volunteer shift at ${location || shift.location || 'TBD'}`,
-      location: location || shift.location || '',
-      start: {
-        dateTime: startDateTime.toISOString(),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      },
-      end: {
-        dateTime: endDateTime.toISOString(),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: 'popup', minutes: 60 },  // 1 hour before
-          { method: 'popup', minutes: 1440 }, // 1 day before
-        ],
-      },
-      colorId: '9', // Blue color for volunteer shifts
-    };
-
-    // Add to Google Calendar via API
-    console.log('[GoogleCalendar] Sending request to Google Calendar API...');
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(event),
-    });
-
-    console.log('[GoogleCalendar] API response status:', response.status);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('[GoogleCalendar] API error:', errorData);
-
-      // Provide more helpful error messages
-      let errorMessage = errorData.error?.message || 'Failed to add event to calendar';
-      if (response.status === 401) {
-        errorMessage = 'Google Calendar access expired. Please sign out and sign in again with Google.';
-      } else if (response.status === 403) {
-        errorMessage = 'Calendar permission denied. Please sign out and sign in again with Google, granting calendar access.';
-      }
-
-      return { success: false, error: errorMessage };
-    }
-
-    const data = await response.json();
-    console.log('[GoogleCalendar] Event added successfully:', data.htmlLink);
-
+    openGoogleCalendarForShift(shift);
     return { success: true };
   } catch (error: any) {
-    console.error('Error adding shift to Google Calendar:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to add shift to calendar'
-    };
+    return { success: false, error: error.message };
   }
 };
 
-/**
- * Add multiple shifts to Google Calendar
- * @param shifts - Array of shifts to add
- * @returns Number of shifts successfully added
- */
+// Legacy function - kept for backward compatibility
 export const addShiftsToGoogleCalendar = async (
   shifts: Shift[]
 ): Promise<{ success: boolean; added: number; failed: number; error?: string }> => {
   try {
-    const isGoogle = await isGoogleUser();
-    if (!isGoogle) {
-      return {
-        success: false,
-        added: 0,
-        failed: shifts.length,
-        error: 'You need to sign in with Google to use calendar sync'
-      };
+    // Open first shift in calendar (opening multiple tabs would be annoying)
+    if (shifts.length > 0) {
+      openGoogleCalendarForShift(shifts[0]);
     }
-
-    let added = 0;
-    let failed = 0;
-
-    for (const shift of shifts) {
-      const result = await addShiftToGoogleCalendar(shift);
-      if (result.success) {
-        added++;
-      } else {
-        failed++;
-        console.error(`Failed to add shift ${shift.title}:`, result.error);
-      }
-    }
-
     return {
-      success: added > 0,
-      added,
-      failed
+      success: true,
+      added: shifts.length > 0 ? 1 : 0,
+      failed: shifts.length > 1 ? shifts.length - 1 : 0,
+      error: shifts.length > 1 ? 'Only the first shift was opened. Please add others manually.' : undefined
     };
   } catch (error: any) {
-    console.error('Error adding shifts to Google Calendar:', error);
-    return {
-      success: false,
-      added: 0,
-      failed: shifts.length,
-      error: error.message || 'Failed to sync shifts'
-    };
+    return { success: false, added: 0, failed: shifts.length, error: error.message };
   }
 };
 
-/**
- * Request additional Google Calendar permissions
- * This will trigger a re-authentication flow with calendar scope
- */
+// Remove the OAuth-based calendar permission request - no longer needed
 export const requestCalendarPermissions = async (): Promise<void> => {
-  try {
-    // Sign in with Google OAuth with calendar scope
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-        scopes: 'https://www.googleapis.com/auth/calendar.events',
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
-    });
-
-    if (error) {
-      console.error('Error requesting calendar permissions:', error);
-      alert('Failed to request calendar permissions');
-    }
-  } catch (error) {
-    console.error('Exception requesting calendar permissions:', error);
-    alert('Failed to request calendar permissions');
-  }
+  // No longer needed - URL-based approach requires no permissions
+  console.log('Calendar permissions not required with URL-based approach');
 };

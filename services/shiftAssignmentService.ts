@@ -198,21 +198,29 @@ export const addVolunteerToShift = async (
 
 /**
  * Remove a volunteer from a shift
+ * Uses .select() to verify deletion actually occurred (RLS can silently block deletes)
  */
 export const removeVolunteerFromShift = async (
   shiftId: string,
   volunteerId: string
 ): Promise<{ success: boolean; error?: string }> => {
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('shift_assignments')
       .delete()
       .eq('shift_id', shiftId)
-      .eq('volunteer_id', volunteerId);
+      .eq('volunteer_id', volunteerId)
+      .select();
 
     if (error) {
       console.error('Error removing volunteer from shift:', error);
       return { success: false, error: error.message };
+    }
+
+    // Check if any row was actually deleted (RLS can silently block deletes)
+    if (!data || data.length === 0) {
+      console.error('No assignment was deleted - possible RLS policy issue');
+      return { success: false, error: 'Could not remove assignment. You may not have permission to modify this shift.' };
     }
 
     return { success: true };

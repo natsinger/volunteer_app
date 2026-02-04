@@ -16,7 +16,7 @@ serve(async (req) => {
   }
 
   try {
-    // Check for force parameter
+    // Check for force parameter to bypass date check (for testing)
     const url = new URL(req.url)
     const force = url.searchParams.get('force') === 'true'
 
@@ -26,21 +26,22 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Check if it's 7 days before end of month (unless forced)
-    if (!force) {
-      const today = new Date()
-      const currentMonth = today.getMonth()
-      const currentYear = today.getFullYear()
-      const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate()
-      const currentDay = today.getDate()
-      const daysUntilEnd = lastDay - currentDay
+    // Check if it's 7 days before end of month (unless force=true)
+    const today = new Date()
+    const currentMonth = today.getMonth()
+    const currentYear = today.getFullYear()
+    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate()
+    const currentDay = today.getDate()
+    const daysUntilEnd = lastDay - currentDay
 
-      if (daysUntilEnd !== 7) {
-        return new Response(
-          JSON.stringify({ message: `Not time to send reminders (${daysUntilEnd} days until end of month). Use ?force=true to send anyway.` }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
-      }
+    if (!force && daysUntilEnd !== 7) {
+      return new Response(
+        JSON.stringify({
+          message: `Not time to send reminders (${daysUntilEnd} days until end of month)`,
+          hint: 'Add ?force=true to bypass date check for testing'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     // Get all active volunteers
@@ -61,16 +62,23 @@ serve(async (req) => {
     }
 
     // Send email to each volunteer
-    // NOTE: Configure your email service here (Resend, SendGrid, etc.)
     const appUrl = Deno.env.get('APP_URL') ?? 'https://volunteer-app-self.vercel.app/'
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
     let sentCount = 0
+    const errors: string[] = []
 
     for (const volunteer of volunteers) {
       try {
+        if (!resendApiKey) {
+          console.log(`[NO API KEY] Would send reminder to: ${volunteer.email}`)
+          sentCount++
+          continue
+        }
+
         const emailResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`,
+            'Authorization': `Bearer ${resendApiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -94,21 +102,24 @@ serve(async (req) => {
         })
 
         if (!emailResponse.ok) {
-          const errorData = await emailResponse.json()
-          console.error(`Resend API error for ${volunteer.email}:`, errorData)
-        } else {
-          console.log(`Successfully sent reminder to: ${volunteer.email}`)
-          sentCount++
+          const errorBody = await emailResponse.text()
+          throw new Error(`Resend API error: ${emailResponse.status} - ${errorBody}`)
         }
+
+        console.log(`Successfully sent reminder to: ${volunteer.email}`)
+        sentCount++
       } catch (emailError) {
         console.error(`Failed to send email to ${volunteer.email}:`, emailError)
+        errors.push(`${volunteer.email}: ${emailError.message}`)
       }
     }
 
     return new Response(
       JSON.stringify({
-        success: true,
-        message: `Reminders sent to ${sentCount}/${volunteers.length} volunteers`
+        success: errors.length === 0,
+        message: `Reminders sent to ${sentCount}/${volunteers.length} volunteers`,
+        hasApiKey: !!resendApiKey,
+        errors: errors.length > 0 ? errors : undefined
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

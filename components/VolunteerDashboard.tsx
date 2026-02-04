@@ -7,7 +7,7 @@ import { loadPublishedEvents } from '../services/eventService';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
-import { isGoogleUser, addShiftsToGoogleCalendar } from '../lib/googleCalendar';
+import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
 import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
 
 interface VolunteerDashboardProps {
@@ -45,7 +45,6 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Google Calendar sync state
-  const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
 
   // Keep editForm synchronized with currentUser changes
   useEffect(() => {
@@ -606,57 +605,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     fileInputRef.current?.click();
   };
 
-  const handleSyncToGoogleCalendar = async () => {
-    if (myShifts.length === 0) {
-      alert('You have no shifts to sync');
-      return;
-    }
-
-    // Check if user is signed in with Google
-    const isGoogle = await isGoogleUser();
-    console.log('[VolunteerDashboard] handleSyncToGoogleCalendar - isGoogleUser:', isGoogle);
-
-    if (!isGoogle) {
-      const shouldRelogin = confirm(
-        'To sync shifts with Google Calendar, you need to sign in with your Google account.\n\n' +
-        'Click OK to sign in with Google now.'
-      );
-      if (shouldRelogin) {
-        // Import and call requestCalendarPermissions
-        const { requestCalendarPermissions } = await import('../lib/googleCalendar');
-        await requestCalendarPermissions();
-      }
-      return;
-    }
-
-    if (!confirm(`Add ${myShifts.length} shift(s) to your Google Calendar?`)) {
-      return;
-    }
-
-    setIsSyncingCalendar(true);
-    try {
-      const result = await addShiftsToGoogleCalendar(myShifts);
-
-      if (result.success) {
-        alert(`Successfully added ${result.added} shift(s) to your Google Calendar!${result.failed > 0 ? `\n${result.failed} shift(s) failed to sync.` : ''}`);
-      } else {
-        // If error mentions signing in again, offer to re-authenticate
-        if (result.error?.includes('sign out') || result.error?.includes('sign in')) {
-          const shouldRelogin = confirm(result.error + '\n\nClick OK to sign in with Google now.');
-          if (shouldRelogin) {
-            const { requestCalendarPermissions } = await import('../lib/googleCalendar');
-            await requestCalendarPermissions();
-          }
-        } else {
-          alert(result.error || 'Failed to sync shifts to Google Calendar');
-        }
-      }
-    } catch (error) {
-      console.error('Error syncing to Google Calendar:', error);
-      alert('Failed to sync shifts to Google Calendar');
-    } finally {
-      setIsSyncingCalendar(false);
-    }
+  // Open a single shift in Google Calendar (URL-based, no OAuth needed)
+  const handleAddShiftToCalendar = (shift: Shift) => {
+    openGoogleCalendarForShift(shift);
   };
 
   const handleSave = async () => {
@@ -869,25 +820,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 <span className="line-clamp-1">My Upcoming Shifts </span>
               </h2>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={handleSyncToGoogleCalendar}
-                  disabled={isSyncingCalendar}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs sm:text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                  title="Add shifts to Google Calendar"
-                >
-                  {isSyncingCalendar ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      <span className="hidden sm:inline">Syncing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Calendar size={14} />
-                      <span className="hidden sm:inline">Sync to Google</span>
-                      <span className="sm:hidden">Sync</span>
-                    </>
-                  )}
-                </button>
+                <span className="text-xs text-slate-500 hidden sm:inline">
+                  Use calendar buttons to add shifts
+                </span>
                 <button
                   onClick={loadMyAssignments}
                   disabled={isLoadingAssignments}
@@ -971,12 +906,20 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                           )}
                           <div className="flex flex-row gap-2">
                             <button
+                              onClick={() => handleAddShiftToCalendar(shift)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm rounded-lg transition-colors whitespace-nowrap bg-amber-50 text-amber-700 hover:bg-amber-100"
+                              title="Add to Google Calendar"
+                            >
+                              <Calendar size={14} />
+                              <span className="hidden sm:inline">Add to Calendar</span>
+                            </button>
+                            <button
                               onClick={() => loadCoworkers(shift)}
                               className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm rounded-lg transition-colors whitespace-nowrap bg-blue-50 text-blue-700 hover:bg-blue-100"
                               title="View team members on this shift"
                             >
                               <Users size={14} />
-                              View Team
+                              <span className="hidden sm:inline">View Team</span>
                             </button>
                             <button
                               onClick={() => handleOpenSwitchModal(shift)}
@@ -989,7 +932,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                               title={existingRequest ? 'Switch request already pending' : 'Switch to a different shift'}
                             >
                               <Repeat size={14} />
-                              {existingRequest ? 'Pending' : 'Switch Shift'}
+                              <span className="hidden sm:inline">{existingRequest ? 'Pending' : 'Switch'}</span>
                             </button>
                           </div>
                         </div>
