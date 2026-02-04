@@ -7,7 +7,21 @@ import { Shift } from '../types';
 export function generateGoogleCalendarUrl(shift: Shift): string {
   // Combine date + time and convert to UTC in YYYYMMDDTHHmmssZ format
   const toUtcDateTime = (date: string, time: string): string => {
-    const localDate = new Date(`${date}T${time}:00`);
+    // Handle time with or without seconds (HH:mm or HH:mm:ss)
+    const timeParts = time.split(':');
+    const hours = timeParts[0] || '00';
+    const minutes = timeParts[1] || '00';
+    const seconds = timeParts[2] || '00';
+
+    const localDate = new Date(`${date}T${hours}:${minutes}:${seconds}`);
+
+    // Check for invalid date
+    if (isNaN(localDate.getTime())) {
+      console.error('Invalid date/time:', date, time);
+      // Fallback: return current time
+      return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    }
+
     return localDate
       .toISOString()
       .replace(/[-:]/g, '')
