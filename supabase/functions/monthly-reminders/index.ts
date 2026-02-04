@@ -69,46 +69,45 @@ serve(async (req) => {
 
     for (const volunteer of volunteers) {
       try {
-        if (resendApiKey) {
-          // Send actual email via Resend API
-          const emailResponse = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${resendApiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              from: 'VolunteerFlow <onboarding@resend.dev>',
-              to: volunteer.email,
-              subject: 'Update Your Volunteer Preferences',
-              html: `
-                <h2>Hi ${volunteer.name},</h2>
-                <p>This is a friendly reminder to update your volunteer preferences for next month.</p>
-                <p>Please log in and review:</p>
-                <ul>
-                  <li>Your preferred days</li>
-                  <li>Any blackout dates</li>
-                  <li>Your availability status</li>
-                  <li>Your location preference</li>
-                </ul>
-                <p><a href="${appUrl}">Update your preferences</a></p>
-                <p>Thank you for your continued support!</p>
-              `
-            })
-          })
-
-          if (!emailResponse.ok) {
-            const errorBody = await emailResponse.text()
-            throw new Error(`Resend API error: ${emailResponse.status} - ${errorBody}`)
-          }
-
-          console.log(`Sent reminder to: ${volunteer.email}`)
-          sentCount++
-        } else {
-          // No API key - log only
+        if (!resendApiKey) {
           console.log(`[NO API KEY] Would send reminder to: ${volunteer.email}`)
           sentCount++
+          continue
         }
+
+        const emailResponse = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: 'VolunteerFlow <noreply@pnimeet.org.il>',
+            to: volunteer.email,
+            subject: 'Update Your Volunteer Preferences',
+            html: `
+              <h2>Hi ${volunteer.name},</h2>
+              <p>This is a friendly reminder to update your volunteer preferences for next month.</p>
+              <p>Please log in and review:</p>
+              <ul>
+                <li>Your preferred days</li>
+                <li>Any blackout dates</li>
+                <li>Your availability status</li>
+                <li>Your location preference</li>
+              </ul>
+              <p><a href="${appUrl}">Update your preferences</a></p>
+              <p>Thank you for your continued support!</p>
+            `
+          })
+        })
+
+        if (!emailResponse.ok) {
+          const errorBody = await emailResponse.text()
+          throw new Error(`Resend API error: ${emailResponse.status} - ${errorBody}`)
+        }
+
+        console.log(`Successfully sent reminder to: ${volunteer.email}`)
+        sentCount++
       } catch (emailError) {
         console.error(`Failed to send email to ${volunteer.email}:`, emailError)
         errors.push(`${volunteer.email}: ${emailError.message}`)
