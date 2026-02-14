@@ -73,10 +73,9 @@ const LoginForm: React.FC = () => {
         provider: 'google',
         options: {
           redirectTo: window.location.origin,
-          scopes: 'https://www.googleapis.com/auth/calendar.events',
+          scopes: 'openid email profile',
           queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
+            include_granted_scopes: 'false',
           },
         }
       });
