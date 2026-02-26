@@ -61,11 +61,13 @@ serve(async (req) => {
       )
     }
 
-    // Send email to each volunteer
+    // Send email to each volunteer (with 600ms delay to stay under Resend's 2 req/sec limit)
     const appUrl = Deno.env.get('APP_URL') ?? 'https://volunteer-app-self.vercel.app/'
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
     let sentCount = 0
     const errors: string[] = []
+
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
     for (const volunteer of volunteers) {
       try {
@@ -108,6 +110,9 @@ serve(async (req) => {
 
         console.log(`Successfully sent reminder to: ${volunteer.email}`)
         sentCount++
+
+        // Throttle to stay under Resend's 2 requests/second rate limit
+        await delay(600)
       } catch (emailError) {
         console.error(`Failed to send email to ${volunteer.email}:`, emailError)
         errors.push(`${volunteer.email}: ${emailError.message}`)
