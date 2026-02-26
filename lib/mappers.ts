@@ -20,6 +20,7 @@ interface VolunteerRow {
   created_at?: string;
   updated_at?: string;
   avatar_url?: string;
+  notes?: string;
 }
 
 interface ShiftRow {
@@ -76,11 +77,11 @@ export const mapVolunteerFromDB = (row: VolunteerRow): Volunteer => ({
   serialNumber: row.serial_number,
   updatedAt: row.updated_at,
   avatarUrl: row.avatar_url,
+  notes: row.notes || '',
 });
 
 // Map TypeScript Volunteer to database row format
 export const mapVolunteerToDB = (volunteer: Volunteer): Partial<VolunteerRow> => ({
-  id: volunteer.id,
   name: volunteer.name,
   email: volunteer.email,
   phone: volunteer.phone,
@@ -96,6 +97,7 @@ export const mapVolunteerToDB = (volunteer: Volunteer): Partial<VolunteerRow> =>
   serial_number: volunteer.serialNumber,
   updated_at: new Date().toISOString(), // Always set current timestamp when saving
   avatar_url: volunteer.avatarUrl,
+  notes: volunteer.notes || '',
 });
 
 // Map database shift row to TypeScript Shift interface

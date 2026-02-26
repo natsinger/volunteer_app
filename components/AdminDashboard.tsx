@@ -94,6 +94,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [targetMonth, setTargetMonth] = useState<number>(nextMonth.getMonth() + 1); // 1-12
   const [targetYear, setTargetYear] = useState<number>(nextMonth.getFullYear());
 
+  // Warn admin about unsaved changes on page refresh/navigation
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (scheduleResultView !== 'none' || editingVolunteer) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [scheduleResultView, editingVolunteer]);
+
   // Load recurring shifts and deleted occurrences on mount
   useEffect(() => {
     loadRecurringShifts();
@@ -1832,26 +1843,42 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <h3 className="font-bold text-slate-900">Saved Schedules for {targetMonth}/{targetYear}</h3>
                     </div>
                     <div className="space-y-2 mb-3">
-                      {savedSchedules
-                        .filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear)
-                        .slice(0, 3)
-                        .map(schedule => (
-                          <div key={schedule.id} className="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
-                            <div>
-                              <div className="font-medium text-slate-900">{schedule.name}</div>
-                              <div className="text-xs text-slate-500">
-                                {new Date(schedule.createdAt).toLocaleDateString()}
-                                {schedule.isPublished && <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">Published</span>}
+                      {(() => {
+                        const monthSchedules = savedSchedules
+                          .filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear);
+                        // Find the latest published schedule (most recently created among published)
+                        const latestPublished = monthSchedules
+                          .filter(s => s.isPublished)
+                          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+                        // Sort: latest published first, then the rest by creation date
+                        const sorted = [...monthSchedules].sort((a, b) => {
+                          if (a.id === latestPublished?.id) return -1;
+                          if (b.id === latestPublished?.id) return 1;
+                          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                        });
+                        return sorted.slice(0, 3).map(schedule => {
+                          const isLatestPublished = schedule.id === latestPublished?.id;
+                          return (
+                            <div key={schedule.id} className={`p-3 rounded-lg flex justify-between items-center ${isLatestPublished ? 'bg-green-50 border-2 border-green-400' : 'bg-white border border-slate-200'}`}>
+                              <div>
+                                <div className="font-medium text-slate-900 flex items-center gap-2">
+                                  {schedule.name}
+                                  {isLatestPublished && <span className="px-2 py-0.5 bg-green-600 text-white rounded text-xs font-medium">Latest Published</span>}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {new Date(schedule.createdAt).toLocaleDateString()}
+                                </div>
                               </div>
+                              <button
+                                onClick={() => handleLoadSchedule(schedule.id)}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg font-medium transition-colors"
+                              >
+                                Load
+                              </button>
                             </div>
-                            <button
-                              onClick={() => handleLoadSchedule(schedule.id)}
-                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg font-medium transition-colors"
-                            >
-                              Load
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        });
+                      })()}
                     </div>
                     {savedSchedules.filter(s => s.targetMonth === targetMonth && s.targetYear === targetYear).length > 3 && (
                       <button
@@ -2206,7 +2233,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Enhanced Shift Details Modal with Editing (For Calendar Click) */}
       {selectedShiftForDetails && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setSelectedShiftForDetails(null)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -2237,7 +2264,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           const vol = volunteers.find(v => v.id === assignment.volunteerId);
                           if (!vol) return null;
                           return (
-                            <div key={idx} className="flex items-center justify-between p-2 bg-indigo-50 rounded-lg border border-indigo-200">
+                            <div key={idx} className="p-2 bg-indigo-50 rounded-lg border border-indigo-200">
+                              <div className="flex items-center justify-between">
                                <div className="flex items-center gap-2">
                                  <div className="w-7 h-7 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-700 font-bold text-xs">
                                    {vol.name.charAt(0)}
@@ -2246,6 +2274,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                    <div className="font-medium text-slate-900 text-sm">{vol.name}</div>
                                    <div className="text-xs text-slate-500">
                                      {vol.skillLevel === 3 ? 'Expert' : vol.skillLevel === 2 ? 'Mid' : 'Entry'}
+                                     {' · '}
+                                     {(() => {
+                                       const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+                                       const assignedCount = generatedAssignments.filter(a => {
+                                         const s = shifts.find(sh => sh.id === a.shiftId);
+                                         return s && s.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
+                                       }).length;
+                                       const capacity = getMonthlyCapacity(vol.frequency);
+                                       return `${assignedCount}/${capacity}`;
+                                     })()}
                                    </div>
                                  </div>
                                </div>
@@ -2256,6 +2294,44 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                >
                                  <UserMinus size={16} />
                                </button>
+                              </div>
+                              <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                                <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                                  vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
+                                  vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
+                                  'bg-purple-100 text-purple-700'
+                                }`}>
+                                  {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
+                                </span>
+                                {vol.preferredDays.map(dayId => {
+                                  const day = DAYS.find(d => d.id === dayId);
+                                  return day ? (
+                                    <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+                                      {day.label}
+                                    </span>
+                                  ) : null;
+                                })}
+                              </div>
+                              {(() => {
+                                const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+                                const otherDates = generatedAssignments
+                                  .filter(a => {
+                                    if (a.volunteerId !== vol.id || a.shiftId === selectedShiftForDetails.id) return false;
+                                    const s = shifts.find(sh => sh.id === a.shiftId);
+                                    return s && s.date.startsWith(targetMonthStr);
+                                  })
+                                  .map(a => {
+                                    const s = shifts.find(sh => sh.id === a.shiftId);
+                                    return s ? parseInt(s.date.split('-')[2], 10) : 0;
+                                  })
+                                  .filter(d => d > 0)
+                                  .sort((a, b) => a - b);
+                                return otherDates.length > 0 ? (
+                                  <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
+                                    Also on: {otherDates.join(', ')}
+                                  </div>
+                                ) : null;
+                              })()}
                             </div>
                           );
                         })
@@ -2331,11 +2407,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                      return availableVolunteers.length > 0 ? (
                        availableVolunteers.map(vol => (
-                         <div key={vol.id} className={`flex items-center justify-between p-2 rounded-lg border transition-colors ${
+                         <div key={vol.id} className={`p-2 rounded-lg border transition-colors ${
                            vol.isAlreadyAssigned
                              ? 'bg-indigo-50 border-indigo-200'
                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
                          }`}>
+                          <div className="flex items-center justify-between">
                            <div className="flex items-center gap-2 flex-1">
                              <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
                                vol.isAlreadyAssigned
@@ -2367,6 +2444,43 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                <UserPlus size={16} />
                              </button>
                            )}
+                          </div>
+                          <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                            <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                              vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
+                              vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
+                              'bg-purple-100 text-purple-700'
+                            }`}>
+                              {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
+                            </span>
+                            {vol.preferredDays.map(dayId => {
+                              const day = DAYS.find(d => d.id === dayId);
+                              return day ? (
+                                <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+                                  {day.label}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                          {(() => {
+                            const assignedDates = generatedAssignments
+                              .filter(a => {
+                                if (a.volunteerId !== vol.id) return false;
+                                const s = shifts.find(sh => sh.id === a.shiftId);
+                                return s && s.date.startsWith(targetMonthStr);
+                              })
+                              .map(a => {
+                                const s = shifts.find(sh => sh.id === a.shiftId);
+                                return s ? parseInt(s.date.split('-')[2], 10) : 0;
+                              })
+                              .filter(d => d > 0)
+                              .sort((a, b) => a - b);
+                            return assignedDates.length > 0 ? (
+                              <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
+                                Assigned: {assignedDates.join(', ')}
+                              </div>
+                            ) : null;
+                          })()}
                          </div>
                        ))
                      ) : (
@@ -2536,6 +2650,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
                   )}
                 </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                <textarea
+                  value={editingVolunteer.notes || ''}
+                  onChange={(e) => {
+                    if (e.target.value.length <= 500) {
+                      setEditingVolunteer({...editingVolunteer, notes: e.target.value});
+                    }
+                  }}
+                  placeholder="Notes about this volunteer..."
+                  className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none"
+                  rows={3}
+                  maxLength={500}
+                />
+                <p className="text-xs text-slate-400 text-right mt-1">{(editingVolunteer.notes || '').length}/500</p>
               </div>
 
             </div>

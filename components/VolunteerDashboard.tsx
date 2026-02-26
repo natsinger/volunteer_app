@@ -13,7 +13,7 @@ import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
   shifts: Shift[];
-  updateVolunteer: (v: Volunteer) => void;
+  updateVolunteer: (v: Volunteer) => Promise<void>;
 }
 
 const DAYS = [
@@ -38,6 +38,14 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   // Avatar upload state
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -288,7 +296,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     }
   };
 
-  // Load monthly schedules when tab switches to monthly-schedule
+  // Load data when tab switches
   useEffect(() => {
     if (activeTab === 'monthly-schedule') {
       if (monthlySchedules.length === 0) {
@@ -617,9 +625,10 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       await updateVolunteer(editForm);
       console.log('[VolunteerDashboard] Save completed successfully');
       setIsEditing(false);
+      setToast({ message: 'Changes saved successfully', type: 'success' });
     } catch (error) {
       console.error('[VolunteerDashboard] Error saving volunteer data:', error);
-      alert('Failed to save changes. Please try again.');
+      setToast({ message: 'Failed to save changes. Please try again.', type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -739,6 +748,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
   return (
     <div className="h-full bg-slate-50 overflow-y-auto">
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all animate-fade-in flex items-center gap-2 ${
+          toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
+        }`}>
+          {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
+          {toast.message}
+          <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <div className="max-w-5xl mx-auto p-3 sm:p-6 md:p-12 pb-24">
 
         {/* Profile Header */}
@@ -1229,6 +1251,15 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                         <span className="font-semibold truncate text-[10px] sm:text-xs text-slate-800">
                                           {shift.startTime.slice(0,5)}
                                         </span>
+                                        {new Date(dateStr).getDay() === 5 && (
+                                          <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
+                                            parseInt(shift.startTime.split(':')[0], 10) < 14
+                                              ? 'bg-amber-200 text-amber-800'
+                                              : 'bg-violet-200 text-violet-800'
+                                          }`}>
+                                            {parseInt(shift.startTime.split(':')[0], 10) < 14 ? 'Opening' : 'Closing'}
+                                          </span>
+                                        )}
                                         {isMyShift && (
                                           <span className="w-2 h-2 rounded-full bg-indigo-600 flex-shrink-0" title="Your Shift"></span>
                                         )}
@@ -1584,6 +1615,24 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <span className="text-slate-400 text-sm italic">Available on all preferred days (no restrictions)</span>
                 )}
               </div>
+            </div>
+
+            {/* Notes */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+              <textarea
+                value={editForm.notes || ''}
+                onChange={(e) => {
+                  if (e.target.value.length <= 500) {
+                    setEditForm({ ...editForm, notes: e.target.value });
+                  }
+                }}
+                placeholder="Add any notes about your availability, preferences, or other info..."
+                className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm resize-none"
+                rows={3}
+                maxLength={500}
+              />
+              <p className="text-xs text-slate-400 text-right mt-1">{(editForm.notes || '').length}/500</p>
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">

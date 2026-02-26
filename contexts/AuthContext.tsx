@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { Volunteer } from '../types';
@@ -33,10 +33,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [volunteerData, setVolunteerData] = useState<Volunteer | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
+  const initialSessionLoaded = useRef(false);
 
   useEffect(() => {
     // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      initialSessionLoaded.current = true;
       setUser(session?.user ?? null);
       if (session?.user) {
         checkUserRole(session.user.id);
@@ -45,10 +47,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // Listen for auth changes
+    // Listen for auth changes — skip events until getSession() has resolved
+    // to prevent a flash to login screen from a null session event
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!initialSessionLoaded.current) return;
       setUser(session?.user ?? null);
       if (session?.user) {
         checkUserRole(session.user.id);

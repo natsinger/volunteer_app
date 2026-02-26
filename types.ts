@@ -15,6 +15,7 @@ export interface Volunteer {
   serialNumber?: number;
   updatedAt?: string; // Timestamp of last update
   avatarUrl?: string; // URL to profile picture in Supabase Storage
+  notes?: string; // Free-text notes about availability
 }
 
 export interface RecurringShift {
