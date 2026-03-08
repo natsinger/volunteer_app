@@ -113,6 +113,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       console.log('=== ADMIN DEBUG ===');
       console.log('Admin status:', data);
       console.log('Error:', error);
+
+      // Also test is_admin() directly
+      const { data: isAdminResult, error: isAdminError } = await supabase.rpc('is_admin');
+      console.log('is_admin() direct call:', isAdminResult, 'Error:', isAdminError);
+
+      // Test if we can DELETE from shift_assignments (use a fake ID)
+      const { data: delTest, error: delError } = await supabase
+        .from('shift_assignments')
+        .delete()
+        .eq('id', '00000000-0000-0000-0000-000000000000')
+        .select();
+      console.log('Delete test result:', delTest, 'Error:', delError);
       console.log('==================');
     };
     checkAdminStatus();
