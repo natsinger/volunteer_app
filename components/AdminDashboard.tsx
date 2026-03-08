@@ -107,6 +107,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Load recurring shifts and deleted occurrences on mount
   useEffect(() => {
+    // DEBUG: Check admin status
+    const checkAdminStatus = async () => {
+      const { data, error } = await supabase.rpc('debug_admin_status');
+      console.log('=== ADMIN DEBUG ===');
+      console.log('Admin status:', data);
+      console.log('Error:', error);
+      console.log('==================');
+    };
+    checkAdminStatus();
+
     loadRecurringShifts();
     loadDeletedOccurrences();
     loadScheduleHistory();
