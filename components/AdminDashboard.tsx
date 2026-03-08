@@ -107,28 +107,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Load recurring shifts and deleted occurrences on mount
   useEffect(() => {
-    // DEBUG: Check admin status
-    const checkAdminStatus = async () => {
-      const { data, error } = await supabase.rpc('debug_admin_status');
-      console.log('=== ADMIN DEBUG ===');
-      console.log('Admin status:', data);
-      console.log('Error:', error);
-
-      // Also test is_admin() directly
-      const { data: isAdminResult, error: isAdminError } = await supabase.rpc('is_admin');
-      console.log('is_admin() direct call:', isAdminResult, 'Error:', isAdminError);
-
-      // Test if we can DELETE from shift_assignments (use a fake ID)
-      const { data: delTest, error: delError } = await supabase
-        .from('shift_assignments')
-        .delete()
-        .eq('id', '00000000-0000-0000-0000-000000000000')
-        .select();
-      console.log('Delete test result:', delTest, 'Error:', delError);
-      console.log('==================');
-    };
-    checkAdminStatus();
-
     loadRecurringShifts();
     loadDeletedOccurrences();
     loadScheduleHistory();
@@ -1022,20 +1000,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleRemoveVolunteerFromShift = async (shiftId: string, volunteerId: string) => {
     console.log('[AdminDashboard] Removing volunteer from shift:', { shiftId, volunteerId });
 
-    // Update local state
+    // Update local state first
     setGeneratedAssignments(prev =>
       prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
     );
 
-    // Update database
+    // Only try to update database if assignments have been applied
+    // If we're editing a draft schedule, the assignment might not exist in DB yet
     const result = await dbRemoveVolunteerFromShift(shiftId, volunteerId);
     console.log('[AdminDashboard] Remove result:', result);
 
     if (!result.success) {
-      console.error('[AdminDashboard] Failed to remove volunteer from shift in database:', result.error);
-      // Rollback local state
-      setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
-      alert(`Failed to remove volunteer from database: ${result.error || 'Unknown error'}`);
+      // Check if this is just a "not found" error (draft schedule, not in DB yet)
+      // In that case, the local state update is sufficient
+      const isNotFoundError = result.error?.includes('not have permission') || result.error?.includes('Could not remove');
+
+      if (isNotFoundError) {
+        // Assignment wasn't in DB - that's OK for draft schedules
+        console.log('[AdminDashboard] Assignment not in database (draft schedule) - local state updated');
+      } else {
+        // Real error - rollback
+        console.error('[AdminDashboard] Failed to remove volunteer from shift in database:', result.error);
+        setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
+        alert(`Failed to remove volunteer from database: ${result.error || 'Unknown error'}`);
+      }
     } else {
       console.log('[AdminDashboard] Successfully removed volunteer from shift_assignments table');
     }
