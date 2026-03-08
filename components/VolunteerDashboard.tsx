@@ -39,6 +39,54 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
+
+  // Session storage key for auto-save
+  const DRAFT_STORAGE_KEY = `volunteer-draft-${currentUser.id}`;
+
+  // Auto-save to sessionStorage every 3 seconds while editing
+  useEffect(() => {
+    if (!isEditing) return;
+
+    const saveTimer = setInterval(() => {
+      try {
+        sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(editForm));
+        console.log('[VolunteerDashboard] Auto-saved draft to session storage');
+      } catch (error) {
+        console.error('[VolunteerDashboard] Failed to auto-save draft:', error);
+      }
+    }, 3000);
+
+    return () => clearInterval(saveTimer);
+  }, [isEditing, editForm, DRAFT_STORAGE_KEY]);
+
+  // Check for saved draft when entering edit mode
+  useEffect(() => {
+    if (isEditing && !hasRestoredDraft) {
+      try {
+        const savedDraft = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+        if (savedDraft) {
+          const draftData = JSON.parse(savedDraft);
+          // Only restore if it's for the same user
+          if (draftData.id === currentUser.id) {
+            setEditForm(draftData);
+            setToast({ message: 'Restored unsaved changes from previous session', type: 'success' });
+            console.log('[VolunteerDashboard] Restored draft from session storage');
+          }
+        }
+      } catch (error) {
+        console.error('[VolunteerDashboard] Failed to restore draft:', error);
+      }
+      setHasRestoredDraft(true);
+    }
+  }, [isEditing, hasRestoredDraft, DRAFT_STORAGE_KEY, currentUser.id]);
+
+  // Clear draft flag when exiting edit mode
+  useEffect(() => {
+    if (!isEditing) {
+      setHasRestoredDraft(false);
+    }
+  }, [isEditing]);
 
   // Auto-dismiss toast after 4 seconds
   useEffect(() => {
@@ -624,6 +672,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     try {
       await updateVolunteer(editForm);
       console.log('[VolunteerDashboard] Save completed successfully');
+      // Clear draft from session storage on successful save
+      try {
+        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+        console.log('[VolunteerDashboard] Cleared draft from session storage');
+      } catch (e) {
+        console.error('[VolunteerDashboard] Failed to clear draft:', e);
+      }
       setIsEditing(false);
       setToast({ message: 'Changes saved successfully', type: 'success' });
     } catch (error) {
