@@ -33,7 +33,9 @@ const LoginForm: React.FC = () => {
       });
 
       if (error) {
-        setError(error.message);
+        setError(error.message === 'Failed to fetch'
+          ? 'Unable to connect to the server. The service may be temporarily unavailable — please try again later.'
+          : error.message);
         setLoading(false);
       } else if (data.user) {
         // Add to pending_users table with name
@@ -86,7 +88,7 @@ const LoginForm: React.FC = () => {
       }
       // User will be redirected to Google, then back to the app
     } catch (err) {
-      setError('Failed to sign in with Google');
+      setError('Unable to connect to the server. The service may be temporarily unavailable — please try again later.');
       setLoading(false);
     }
   };

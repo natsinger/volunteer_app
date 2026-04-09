@@ -143,12 +143,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
+        if (error.message === 'Failed to fetch') {
+          return { error: 'Unable to connect to the server. The service may be temporarily unavailable — please try again later.' };
+        }
         return { error: error.message };
       }
 
       return {};
     } catch (error) {
-      return { error: 'An unexpected error occurred' };
+      return { error: 'Unable to connect to the server. Please check your internet connection and try again.' };
     }
   };
 
