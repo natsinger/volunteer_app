@@ -2669,17 +2669,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {editingVolunteer.blackoutDates.map(date => (
-                    <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
-                      {date}
-                      <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                  {editingVolunteer.blackoutDates.length === 0 && (
-                    <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
-                  )}
+                  {(() => {
+                    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+                    const futureDates = editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart);
+                    const pastDates = editingVolunteer.blackoutDates.filter(d => d < currentMonthStart);
+                    return (
+                      <>
+                        {futureDates.map(date => (
+                          <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
+                            {date}
+                            <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                        {pastDates.length > 0 && (
+                          <details className="w-full">
+                            <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">{pastDates.length} past date{pastDates.length !== 1 ? 's' : ''} hidden</summary>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {pastDates.map(date => (
+                                <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-400 rounded-md text-sm">
+                                  {date}
+                                  <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-slate-100 rounded p-0.5">
+                                    <X size={12} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                        {editingVolunteer.blackoutDates.length === 0 && (
+                          <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
