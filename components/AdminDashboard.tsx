@@ -52,6 +52,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Volunteer Management State
   const [searchTerm, setSearchTerm] = useState('');
   const [statsSearchTerm, setStatsSearchTerm] = useState('');
+  const [expandedVolunteerId, setExpandedVolunteerId] = useState<string | null>(null);
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
   const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
@@ -1297,7 +1298,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const StatsView = () => {
     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-    const [expandedVolunteerId, setExpandedVolunteerId] = React.useState<string | null>(null);
 
     const stats = volunteers.map(vol => {
       const capacity = getMonthlyCapacity(vol.frequency);
@@ -1988,7 +1988,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
                 
-                {scheduleResultView === 'calendar' ? <CalendarView /> : <StatsView />}
+                {scheduleResultView === 'calendar' ? CalendarView() : StatsView()}
               </div>
             )}
           </div>
