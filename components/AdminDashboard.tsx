@@ -557,15 +557,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleSaveVolunteerEdit = async () => {
     if (!editingVolunteer) return;
 
+    // Strip past-month dates before saving
+    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+    const cleanedVolunteer = {
+      ...editingVolunteer,
+      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart),
+    };
+
     try {
       // Convert volunteer to database format
-      const dbVolunteer = mapVolunteerToDB(editingVolunteer);
+      const dbVolunteer = mapVolunteerToDB(cleanedVolunteer);
 
       // Update in Supabase
       const { error } = await supabase
         .from('volunteers')
         .update(dbVolunteer)
-        .eq('id', editingVolunteer.id);
+        .eq('id', cleanedVolunteer.id);
 
       if (error) {
         console.error('Error updating volunteer:', error);
@@ -574,7 +581,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       // Update local state
-      setVolunteers(prev => prev.map(v => v.id === editingVolunteer.id ? editingVolunteer : v));
+      setVolunteers(prev => prev.map(v => v.id === cleanedVolunteer.id ? cleanedVolunteer : v));
       setEditingVolunteer(null);
     } catch (err) {
       console.error('Unexpected error during update:', err);
@@ -2669,41 +2676,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {(() => {
-                    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
-                    const futureDates = editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart);
-                    const pastDates = editingVolunteer.blackoutDates.filter(d => d < currentMonthStart);
-                    return (
-                      <>
-                        {futureDates.map(date => (
-                          <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
-                            {date}
-                            <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
-                              <X size={12} />
-                            </button>
-                          </span>
-                        ))}
-                        {pastDates.length > 0 && (
-                          <details className="w-full">
-                            <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">{pastDates.length} past date{pastDates.length !== 1 ? 's' : ''} hidden</summary>
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {pastDates.map(date => (
-                                <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-400 rounded-md text-sm">
-                                  {date}
-                                  <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-slate-100 rounded p-0.5">
-                                    <X size={12} />
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                        {editingVolunteer.blackoutDates.length === 0 && (
-                          <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
-                        )}
-                      </>
-                    );
-                  })()}
+                  {editingVolunteer.blackoutDates
+                    .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                    .map(date => (
+                    <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
+                      {date}
+                      <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  {editingVolunteer.blackoutDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
+                    <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                  )}
                 </div>
               </div>
 
