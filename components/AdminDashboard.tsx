@@ -3,7 +3,7 @@ import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
 } from 'lucide-react';
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
@@ -16,7 +16,7 @@ import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignmen
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
-import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent } from '../services/eventService';
+import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent, getEventAttendances } from '../services/eventService';
 import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
 
 interface AdminDashboardProps {
@@ -87,6 +87,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [events, setEvents] = useState<Event[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [eventAttendances, setEventAttendances] = useState<EventAttendance[]>([]);
 
   // Auto-Scheduler State: Default to Next Month
   const today = new Date();
@@ -594,6 +595,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const result = await loadAllEvents();
     if (result.success && result.events) {
       setEvents(result.events);
+      // Load attendances for all events
+      if (result.events.length > 0) {
+        const attendResult = await getEventAttendances(result.events.map(e => e.id));
+        if (attendResult.success && attendResult.attendances) {
+          setEventAttendances(attendResult.attendances);
+        }
+      }
     }
   };
 
@@ -2049,6 +2057,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <span>{event.date}</span>
                             )}
                           </div>
+                          {(() => {
+                            const totalAttendees = eventAttendances.filter(a => a.eventId === event.id).length;
+                            return totalAttendees > 0 ? (
+                              <div className="flex items-center gap-1 text-green-600">
+                                <Users size={16} />
+                                <span>{totalAttendees} attending</span>
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                       </div>
 

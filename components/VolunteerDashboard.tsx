@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload } from 'lucide-react';
-import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event } from '../types';
+import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event, EventAttendance } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
 import { loadPublishedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
-import { loadPublishedEvents } from '../services/eventService';
+import { loadPublishedEvents, getEventAttendances, toggleEventAttendance } from '../services/eventService';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
@@ -149,6 +149,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   // Events state
   const [publishedEvents, setPublishedEvents] = useState<Event[]>([]);
   const [selectedEventForDetails, setSelectedEventForDetails] = useState<Event | null>(null);
+  const [selectedEventDate, setSelectedEventDate] = useState<string>(''); // The calendar date clicked for this event
+  const [eventAttendances, setEventAttendances] = useState<EventAttendance[]>([]);
+  const [isTogglingAttendance, setIsTogglingAttendance] = useState(false);
 
   // Load volunteer's assignments and switch requests from database
   useEffect(() => {
@@ -288,9 +291,42 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       if (result.success && result.events) {
         setPublishedEvents(result.events);
         console.log('[VolunteerDashboard] Loaded', result.events.length, 'published events');
+
+        // Load attendances for all events
+        if (result.events.length > 0) {
+          const attendResult = await getEventAttendances(result.events.map(e => e.id));
+          if (attendResult.success && attendResult.attendances) {
+            setEventAttendances(attendResult.attendances);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading published events:', error);
+    }
+  };
+
+  const handleToggleAttendance = async (eventId: string, eventDate: string) => {
+    setIsTogglingAttendance(true);
+    try {
+      const result = await toggleEventAttendance(eventId, currentUser.id, eventDate);
+      if (result.success) {
+        if (result.attending) {
+          // Reload attendances to get the new record with its ID
+          const attendResult = await getEventAttendances(publishedEvents.map(e => e.id));
+          if (attendResult.success && attendResult.attendances) {
+            setEventAttendances(attendResult.attendances);
+          }
+        } else {
+          // Remove from local state
+          setEventAttendances(prev =>
+            prev.filter(a => !(a.eventId === eventId && a.volunteerId === currentUser.id && a.eventDate === eventDate))
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling attendance:', error);
+    } finally {
+      setIsTogglingAttendance(false);
     }
   };
 
@@ -1350,11 +1386,16 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                 })}
 
                                 {/* Render Events */}
-                                {dayEvents.map(event => (
+                                {dayEvents.map(event => {
+                                  const attendCount = eventAttendances.filter(a => a.eventId === event.id && a.eventDate === dateStr).length;
+                                  const isAttending = eventAttendances.some(a => a.eventId === event.id && a.volunteerId === currentUser.id && a.eventDate === dateStr);
+                                  return (
                                   <div
                                     key={event.id}
-                                    onClick={() => setSelectedEventForDetails(event)}
-                                    className="p-1 sm:p-1.5 rounded border border-green-300 bg-green-50 text-xs cursor-pointer hover:shadow-sm transition-shadow"
+                                    onClick={() => { setSelectedEventForDetails(event); setSelectedEventDate(dateStr); }}
+                                    className={`p-1 sm:p-1.5 rounded border text-xs cursor-pointer hover:shadow-sm transition-shadow ${
+                                      isAttending ? 'border-green-500 bg-green-100' : 'border-green-300 bg-green-50'
+                                    }`}
                                     title={`${event.title}${event.description ? ': ' + event.description : ''}\n${event.startTime}-${event.endTime}${event.location ? '\n' + event.location : ''}`}
                                   >
                                     <div className="flex items-center gap-1 mb-0.5">
@@ -1368,13 +1409,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                     <div className="text-[10px] sm:text-xs text-green-700 font-medium truncate">
                                       {event.title}
                                     </div>
-                                    {event.location && (
-                                      <div className="text-[8px] sm:text-[10px] text-green-600 truncate mt-0.5">
-                                        {event.location}
-                                      </div>
-                                    )}
+                                    <div className="flex items-center justify-between mt-0.5">
+                                      {event.location && (
+                                        <div className="text-[8px] sm:text-[10px] text-green-600 truncate">
+                                          {event.location}
+                                        </div>
+                                      )}
+                                      {attendCount > 0 && (
+                                        <span className="text-[8px] sm:text-[10px] text-green-700 font-medium flex items-center gap-0.5 flex-shrink-0">
+                                          <Users size={10} /> {attendCount}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           );
@@ -2004,8 +2053,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         </div>
       )}
 
-      {/* Event Details Modal (Read-Only) */}
-      {selectedEventForDetails && (
+      {/* Event Details Modal */}
+      {selectedEventForDetails && (() => {
+        const modalEventDate = selectedEventDate || selectedEventForDetails.date || '';
+        const modalAttendees = eventAttendances.filter(a => a.eventId === selectedEventForDetails.id && a.eventDate === modalEventDate);
+        const isCurrentlyAttending = modalAttendees.some(a => a.volunteerId === currentUser.id);
+        return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative">
             <button
@@ -2056,9 +2109,31 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   <span><strong>Date:</strong> {selectedEventForDetails.date}</span>
                 )}
               </div>
+
+              {/* Attendance info */}
+              <div className="flex items-center gap-2 text-slate-700">
+                <Users size={18} className="text-slate-400" />
+                <span><strong>Attending:</strong> {modalAttendees.length} volunteer{modalAttendees.length !== 1 ? 's' : ''}</span>
+              </div>
             </div>
 
-            <div className="mt-6 flex justify-end">
+            {/* Attend / Un-attend button */}
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <button
+                onClick={() => handleToggleAttendance(selectedEventForDetails.id, modalEventDate)}
+                disabled={isTogglingAttendance || !modalEventDate}
+                className={`px-5 py-2.5 rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isCurrentlyAttending
+                    ? 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                    : 'bg-green-600 text-white hover:bg-green-700'
+                }`}
+              >
+                {isCurrentlyAttending ? (
+                  <><X size={18} /> Can&apos;t Make It</>
+                ) : (
+                  <><Check size={18} /> I&apos;ll Attend</>
+                )}
+              </button>
               <button
                 onClick={() => setSelectedEventForDetails(null)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
@@ -2068,7 +2143,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

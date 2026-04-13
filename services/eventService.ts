@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { Event } from '../types';
+import { Event, EventAttendance } from '../types';
 
 // Mapper functions for database format
 const mapEventFromDB = (dbEvent: any): Event => ({
@@ -235,6 +235,95 @@ export const getEventsForDateRange = async (
     return { success: true, events };
   } catch (error: any) {
     console.error('Unexpected error loading events for date range:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+};
+
+// ==================== Event Attendance ====================
+
+const mapAttendanceFromDB = (row: any): EventAttendance => ({
+  id: row.id,
+  eventId: row.event_id,
+  volunteerId: row.volunteer_id,
+  eventDate: row.event_date,
+  createdAt: row.created_at,
+});
+
+/**
+ * Get all attendances for a set of event IDs (used to show counts and status)
+ */
+export const getEventAttendances = async (
+  eventIds: string[]
+): Promise<{ success: boolean; attendances?: EventAttendance[]; error?: string }> => {
+  if (eventIds.length === 0) return { success: true, attendances: [] };
+  try {
+    const { data, error } = await supabase
+      .from('event_attendances')
+      .select('*')
+      .in('event_id', eventIds);
+
+    if (error) {
+      console.error('Error loading event attendances:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, attendances: (data || []).map(mapAttendanceFromDB) };
+  } catch (error: any) {
+    console.error('Unexpected error loading event attendances:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+};
+
+/**
+ * Toggle attendance for a volunteer on a specific event + date.
+ * Returns the new attending state.
+ */
+export const toggleEventAttendance = async (
+  eventId: string,
+  volunteerId: string,
+  eventDate: string
+): Promise<{ success: boolean; attending?: boolean; error?: string }> => {
+  try {
+    // Check if already attending
+    const { data: existing, error: checkError } = await supabase
+      .from('event_attendances')
+      .select('id')
+      .eq('event_id', eventId)
+      .eq('volunteer_id', volunteerId)
+      .eq('event_date', eventDate)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error('Error checking attendance:', checkError);
+      return { success: false, error: checkError.message };
+    }
+
+    if (existing) {
+      // Remove attendance
+      const { error: deleteError } = await supabase
+        .from('event_attendances')
+        .delete()
+        .eq('id', existing.id);
+
+      if (deleteError) {
+        console.error('Error removing attendance:', deleteError);
+        return { success: false, error: deleteError.message };
+      }
+      return { success: true, attending: false };
+    } else {
+      // Add attendance
+      const { error: insertError } = await supabase
+        .from('event_attendances')
+        .insert([{ event_id: eventId, volunteer_id: volunteerId, event_date: eventDate }]);
+
+      if (insertError) {
+        console.error('Error adding attendance:', insertError);
+        return { success: false, error: insertError.message };
+      }
+      return { success: true, attending: true };
+    }
+  } catch (error: any) {
+    console.error('Unexpected error toggling attendance:', error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 };
