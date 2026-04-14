@@ -130,6 +130,14 @@ export interface Event {
   updatedAt: string;
 }
 
+export interface EventAttendance {
+  id: string;
+  eventId: string;
+  volunteerId: string;
+  eventDate: string; // YYYY-MM-DD
+  createdAt: string;
+}
+
 export interface AppState {
   volunteers: Volunteer[];
   shifts: Shift[];

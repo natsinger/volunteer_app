@@ -3,7 +3,7 @@ import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
 } from 'lucide-react';
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
 import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
@@ -16,7 +16,7 @@ import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignmen
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
-import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent } from '../services/eventService';
+import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent, getEventAttendances } from '../services/eventService';
 import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
 
 interface AdminDashboardProps {
@@ -52,6 +52,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Volunteer Management State
   const [searchTerm, setSearchTerm] = useState('');
   const [statsSearchTerm, setStatsSearchTerm] = useState('');
+  const [expandedVolunteerId, setExpandedVolunteerId] = useState<string | null>(null);
   const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
   const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
@@ -87,6 +88,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [events, setEvents] = useState<Event[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [eventAttendances, setEventAttendances] = useState<EventAttendance[]>([]);
 
   // Auto-Scheduler State: Default to Next Month
   const today = new Date();
@@ -556,15 +558,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleSaveVolunteerEdit = async () => {
     if (!editingVolunteer) return;
 
+    // Strip past-month dates before saving
+    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+    const cleanedVolunteer = {
+      ...editingVolunteer,
+      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart),
+    };
+
     try {
       // Convert volunteer to database format
-      const dbVolunteer = mapVolunteerToDB(editingVolunteer);
+      const dbVolunteer = mapVolunteerToDB(cleanedVolunteer);
 
       // Update in Supabase
       const { error } = await supabase
         .from('volunteers')
         .update(dbVolunteer)
-        .eq('id', editingVolunteer.id);
+        .eq('id', cleanedVolunteer.id);
 
       if (error) {
         console.error('Error updating volunteer:', error);
@@ -573,7 +582,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       // Update local state
-      setVolunteers(prev => prev.map(v => v.id === editingVolunteer.id ? editingVolunteer : v));
+      setVolunteers(prev => prev.map(v => v.id === cleanedVolunteer.id ? cleanedVolunteer : v));
       setEditingVolunteer(null);
     } catch (err) {
       console.error('Unexpected error during update:', err);
@@ -594,6 +603,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const result = await loadAllEvents();
     if (result.success && result.events) {
       setEvents(result.events);
+      // Load attendances for all events
+      if (result.events.length > 0) {
+        const attendResult = await getEventAttendances(result.events.map(e => e.id));
+        if (attendResult.success && attendResult.attendances) {
+          setEventAttendances(attendResult.attendances);
+        }
+      }
     }
   };
 
@@ -1282,7 +1298,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const StatsView = () => {
     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-    const [expandedVolunteerId, setExpandedVolunteerId] = React.useState<string | null>(null);
 
     const stats = volunteers.map(vol => {
       const capacity = getMonthlyCapacity(vol.frequency);
@@ -1973,7 +1988,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
                 
-                {scheduleResultView === 'calendar' ? <CalendarView /> : <StatsView />}
+                {scheduleResultView === 'calendar' ? CalendarView() : StatsView()}
               </div>
             )}
           </div>
@@ -2049,6 +2064,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <span>{event.date}</span>
                             )}
                           </div>
+                          {(() => {
+                            const totalAttendees = eventAttendances.filter(a => a.eventId === event.id).length;
+                            return totalAttendees > 0 ? (
+                              <div className="flex items-center gap-1 text-green-600">
+                                <Users size={16} />
+                                <span>{totalAttendees} attending</span>
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                       </div>
 
@@ -2652,7 +2676,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {editingVolunteer.blackoutDates.map(date => (
+                  {editingVolunteer.blackoutDates
+                    .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                    .map(date => (
                     <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
                       {date}
                       <button onClick={() => removeAdminBlackoutDate(date)} className="hover:bg-red-100 rounded p-0.5">
@@ -2660,7 +2686,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </button>
                     </span>
                   ))}
-                  {editingVolunteer.blackoutDates.length === 0 && (
+                  {editingVolunteer.blackoutDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
                     <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
                   )}
                 </div>
