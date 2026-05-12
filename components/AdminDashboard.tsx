@@ -841,13 +841,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     let result;
     if (saveMode === 'update' && selectedScheduleToUpdate) {
-      // Update existing schedule
+      // Preserve the existing published flag — saving metadata changes
+      // must never silently unpublish a schedule that volunteers can see.
+      const existing = savedSchedules.find(s => s.id === selectedScheduleToUpdate);
+      const nextIsPublished = assignmentsApplied || (existing?.isPublished ?? false);
+
       result = await updateSchedule(
         selectedScheduleToUpdate,
         scheduleNameInput,
         generatedAssignments,
         scheduleNotesInput,
-        assignmentsApplied
+        nextIsPublished
       );
     } else {
       // Create new schedule
@@ -919,11 +923,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setScheduleResultView('calendar');
       setShowScheduleHistory(false);
 
-      // Set the target month/year to match the loaded schedule
+      // Set the target month/year to match the loaded schedule, and
+      // restore the published flag so a later Save doesn't silently
+      // unpublish a schedule that was previously applied to the database.
       const schedule = savedSchedules.find(s => s.id === scheduleId);
       if (schedule) {
         setTargetMonth(schedule.targetMonth);
         setTargetYear(schedule.targetYear);
+        setAssignmentsApplied(schedule.isPublished);
       }
     } else {
       alert(`Failed to load schedule: ${result.error}`);
