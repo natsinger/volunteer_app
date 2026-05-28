@@ -42,8 +42,8 @@ const ApprovalPending: React.FC = () => {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-4 sm:mb-6">
             <p className="text-xs sm:text-sm text-blue-900">
               <strong>Need help?</strong> Contact the administrator at{' '}
-              <a href="mailto:info@pnimet.org.il" className="text-blue-600 hover:underline break-all">
-                info@pnimet.org.il
+              <a href="mailto:info@pnimeet.org.il" className="text-blue-600 hover:underline break-all">
+                info@pnimeet.org.il
               </a>
             </p>
           </div>
