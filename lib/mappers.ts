@@ -1,4 +1,4 @@
-import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, ShiftAssignment, ShiftSwitchRequest } from '../types';
+import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, ShiftAssignment, ShiftSwitchRequest, ShiftSlot } from '../types';
 
 // Database row interfaces (snake_case as returned from Supabase)
 interface VolunteerRow {
@@ -34,6 +34,7 @@ interface ShiftRow {
   required_skills: string[];
   assigned_volunteer_id?: string | null;
   status: string;
+  shift_slot?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -48,6 +49,7 @@ interface RecurringShiftRow {
   required_skills: string[];
   required_volunteers: number;
   is_active: boolean;
+  shift_slot?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -100,6 +102,14 @@ export const mapVolunteerToDB = (volunteer: Volunteer): Partial<VolunteerRow> =>
   notes: volunteer.notes || '',
 });
 
+// Narrow an arbitrary DB string into the ShiftSlot type, or null if invalid.
+const toShiftSlot = (value: string | null | undefined): ShiftSlot | null => {
+  if (value === 'opening' || value === 'closing' || value === 'morning' || value === 'evening') {
+    return value;
+  }
+  return null;
+};
+
 // Map database shift row to TypeScript Shift interface
 export const mapShiftFromDB = (row: ShiftRow): Shift => ({
   id: row.id,
@@ -112,6 +122,7 @@ export const mapShiftFromDB = (row: ShiftRow): Shift => ({
   requiredSkills: row.required_skills || [],
   assignedVolunteerId: row.assigned_volunteer_id,
   status: row.status as 'Open' | 'Assigned' | 'Completed',
+  shiftSlot: toShiftSlot(row.shift_slot),
 });
 
 // Map TypeScript Shift to database row format
@@ -126,6 +137,7 @@ export const mapShiftToDB = (shift: Shift): Partial<ShiftRow> => ({
   required_skills: shift.requiredSkills || [],
   assigned_volunteer_id: shift.assignedVolunteerId,
   status: shift.status,
+  shift_slot: shift.shiftSlot ?? null,
 });
 
 // Map database recurring shift row to TypeScript RecurringShift interface
@@ -139,6 +151,7 @@ export const mapRecurringShiftFromDB = (row: RecurringShiftRow): RecurringShift 
   requiredSkills: row.required_skills || [],
   requiredVolunteers: row.required_volunteers,
   isActive: row.is_active,
+  shiftSlot: toShiftSlot(row.shift_slot),
 });
 
 // Map TypeScript RecurringShift to database row format
@@ -152,6 +165,7 @@ export const mapRecurringShiftToDB = (recurringShift: RecurringShift): Partial<R
   required_skills: recurringShift.requiredSkills || [],
   required_volunteers: recurringShift.requiredVolunteers,
   is_active: recurringShift.isActive,
+  shift_slot: recurringShift.shiftSlot ?? null,
 });
 
 // Map database deleted occurrence row to TypeScript DeletedShiftOccurrence interface

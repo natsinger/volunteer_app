@@ -28,26 +28,54 @@ export const getMonthlyCapacity = (frequency: string): number => {
   return 0; // Default or inactive
 };
 
-// Helper to get the specific day code (0, 1, 2_morning, 2_evening, 5_opening, 5_closing, etc.)
-export const getShiftDayCode = (dateStr: string, timeStr: string): string => {
+/**
+ * Get the day code used to match a shift against a volunteer's preferredDays.
+ *
+ * Codes:
+ *   - '0'..'6'                          → Sun..Sat (single-slot days)
+ *   - '2_morning' / '2_evening'         → Tuesday split
+ *   - '5_opening' / '5_closing'         → Friday split
+ *
+ * For split days (2 and 5), this prefers the shift's explicit `shiftSlot`
+ * tag when set, and only falls back to the legacy time-of-day heuristic
+ * (Tuesday < 16:00 = morning; Friday < 14:00 = opening) when no tag exists.
+ *
+ * Two call shapes are supported:
+ *   getShiftDayCode(shift)               // preferred — uses shiftSlot
+ *   getShiftDayCode(dateStr, timeStr)    // legacy — time-based only
+ */
+export function getShiftDayCode(shift: Shift): string;
+export function getShiftDayCode(dateStr: string, timeStr: string): string;
+export function getShiftDayCode(shiftOrDate: Shift | string, timeStr?: string): string {
+  // Normalize arguments
+  const dateStr = typeof shiftOrDate === 'string' ? shiftOrDate : shiftOrDate.date;
+  const startTime = typeof shiftOrDate === 'string' ? (timeStr ?? '') : shiftOrDate.startTime;
+  const explicitSlot = typeof shiftOrDate === 'string' ? null : (shiftOrDate.shiftSlot ?? null);
+
   const date = new Date(dateStr);
   const day = date.getDay(); // 0 = Sunday
-  const hour = parseInt(timeStr.split(':')[0], 10);
+  const hour = parseInt(startTime.split(':')[0], 10);
 
   // Tuesday (Day 2) splits: morning vs evening
   if (day === 2) {
-    // Before 16:00 = morning, 16:00+ = evening
+    if (explicitSlot === 'morning' || explicitSlot === 'evening') {
+      return `2_${explicitSlot}`;
+    }
+    // Fallback: Before 16:00 = morning, 16:00+ = evening
     return hour < 16 ? '2_morning' : '2_evening';
   }
 
   // Friday (Day 5) splits: opening vs closing
   if (day === 5) {
-    // Before 14:00 = opening shift, 14:00+ = closing shift
+    if (explicitSlot === 'opening' || explicitSlot === 'closing') {
+      return `5_${explicitSlot}`;
+    }
+    // Fallback: Before 14:00 = opening, 14:00+ = closing
     return hour < 14 ? '5_opening' : '5_closing';
   }
 
   return day.toString();
-};
+}
 
 /**
  * Get the ISO week number for a given date
@@ -91,8 +119,8 @@ export const canVolunteerWorkShift = (volunteer: Volunteer, shift: Shift): boole
     if (volunteer.preferredLocation !== shift.location) return false;
   }
 
-  // Check day preference
-  const dayCode = getShiftDayCode(shift.date, shift.startTime);
+  // Check day preference (uses shift.shiftSlot when set, time-based fallback otherwise)
+  const dayCode = getShiftDayCode(shift);
   if (!volunteer.preferredDays.includes(dayCode)) return false;
 
   // Check blackout dates
@@ -238,8 +266,8 @@ function scheduleShiftsMultiPass(
       if (volunteer.preferredLocation !== shift.location) return false;
     }
 
-    // Check day preference
-    const dayCode = getShiftDayCode(shift.date, shift.startTime);
+    // Check day preference (uses shift.shiftSlot when set, time-based fallback otherwise)
+    const dayCode = getShiftDayCode(shift);
     if (!volunteer.preferredDays.includes(dayCode)) return false;
 
     // Check blackout dates (blocked days)
