@@ -36,7 +36,7 @@ Follow these steps to diagnose and fix admin login issues.
 **Fix:**
 1. Go to **Authentication** → **Users** in Supabase Dashboard
 2. Click **"Invite User"**
-3. Enter email: `info@pnimet.org.il`
+3. Enter email: `info@pnimeet.org.il`
 4. Click **Send Invite**
 5. Check the email inbox - user will receive password setup email
 6. After user sets password, go back to SQL Editor
@@ -45,7 +45,7 @@ Follow these steps to diagnose and fix admin login issues.
    INSERT INTO admins (email, user_id)
    SELECT email, id
    FROM auth.users
-   WHERE email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+   WHERE email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
      AND NOT EXISTS (
        SELECT 1 FROM admins WHERE user_id = auth.users.id
      );
@@ -64,7 +64,7 @@ Follow these steps to diagnose and fix admin login issues.
    INSERT INTO admins (email, user_id)
    SELECT email, id
    FROM auth.users
-   WHERE email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+   WHERE email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
      AND NOT EXISTS (
        SELECT 1 FROM admins WHERE user_id = auth.users.id
      );
@@ -86,7 +86,7 @@ Follow these steps to diagnose and fix admin login issues.
    SET user_id = u.id
    FROM auth.users u
    WHERE a.email = u.email
-     AND a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+     AND a.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
      AND (a.user_id IS NULL OR a.user_id != u.id);
    ```
 3. Run the "Final Verification" query again
@@ -100,7 +100,7 @@ Follow these steps to diagnose and fix admin login issues.
 
 **Fix:**
 1. Go to **Authentication** → **Users** in Supabase Dashboard
-2. Find the user (info@pnimet.org.il)
+2. Find the user (info@pnimeet.org.il)
 3. Click the **three dots (⋮)** menu
 4. Click **"Send Password Recovery"**
 5. User will receive email with password reset link
@@ -136,7 +136,7 @@ If everything is set up correctly but login still fails:
 1. **Try logging in:**
    - Go to your app
    - Select **Admin Portal**
-   - Email: `info@pnimet.org.il`
+   - Email: `info@pnimeet.org.il`
    - Password: (the one set via email)
 
 2. **If login fails:**
@@ -155,21 +155,21 @@ If everything is set up correctly but login still fails:
 
 **Check if admin exists:**
 ```sql
-SELECT * FROM admins WHERE email = 'info@pnimet.org.il';
+SELECT * FROM admins WHERE email = 'info@pnimeet.org.il';
 ```
 
 **Check if user exists in auth:**
 ```sql
 SELECT id, email, email_confirmed_at
 FROM auth.users
-WHERE email = 'info@pnimet.org.il';
+WHERE email = 'info@pnimeet.org.il';
 ```
 
 **Link admin to existing user:**
 ```sql
 UPDATE admins
-SET user_id = (SELECT id FROM auth.users WHERE email = 'info@pnimet.org.il')
-WHERE email = 'info@pnimet.org.il';
+SET user_id = (SELECT id FROM auth.users WHERE email = 'info@pnimeet.org.il')
+WHERE email = 'info@pnimeet.org.il';
 ```
 
 ---
@@ -181,7 +181,7 @@ If none of the above works:
 1. **Check RLS Policies:**
    ```sql
    -- See if admin can read their own record
-   SELECT * FROM admins WHERE email = 'info@pnimet.org.il';
+   SELECT * FROM admins WHERE email = 'info@pnimeet.org.il';
    ```
 
 2. **Check the is_admin() function:**

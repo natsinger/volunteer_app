@@ -46,7 +46,7 @@ You need to create the two admin accounts in Supabase Auth:
 1. Go to your Supabase project dashboard
 2. Navigate to Authentication > Users
 3. Click "Invite User"
-4. Enter the email: `info@pnimet.org.il`
+4. Enter the email: `info@pnimeet.org.il`
 5. A confirmation email will be sent to create their password
 6. Repeat for: `omri@pnimeet.org.il`
 
@@ -71,7 +71,7 @@ After creating the auth users, you need to link them to the admins table:
 -- Replace <user_id_1> and <user_id_2> with the actual UUIDs from step 2
 INSERT INTO admins (email, user_id)
 VALUES
-  ('info@pnimet.org.il', '<user_id_1>'),
+  ('info@pnimeet.org.il', '<user_id_1>'),
   ('omri@pnimeet.org.il', '<user_id_2>');
 ```
 

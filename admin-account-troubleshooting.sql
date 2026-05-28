@@ -17,7 +17,7 @@ SELECT
     ELSE '✅ Account active'
   END as status
 FROM auth.users
-WHERE email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
 ORDER BY email;
 
 -- ============================================
@@ -35,7 +35,7 @@ SELECT
   END as status
 FROM admins a
 LEFT JOIN auth.users u ON a.user_id = u.id
-WHERE a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE a.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
 ORDER BY a.email;
 
 -- ============================================
@@ -48,7 +48,7 @@ SELECT
   '⚠️ User exists in auth but not linked to admins table' as issue,
   'Run the FIX script below to link this user' as solution
 FROM auth.users u
-WHERE u.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE u.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
   AND NOT EXISTS (
     SELECT 1 FROM admins a WHERE a.user_id = u.id
   );
@@ -66,7 +66,7 @@ SELECT
     ELSE '⚠️ user_id points to non-existent user'
   END as issue
 FROM admins a
-WHERE a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE a.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
   AND (a.user_id IS NULL OR NOT EXISTS (
     SELECT 1 FROM auth.users u WHERE u.id = a.user_id
   ));
@@ -81,7 +81,7 @@ WHERE a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
 INSERT INTO admins (email, user_id)
 SELECT email, id
 FROM auth.users
-WHERE email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
   AND NOT EXISTS (
     SELECT 1 FROM admins WHERE user_id = auth.users.id
   );
@@ -98,7 +98,7 @@ UPDATE admins a
 SET user_id = u.id
 FROM auth.users u
 WHERE a.email = u.email
-  AND a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+  AND a.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
   AND (a.user_id IS NULL OR a.user_id != u.id);
 */
 
@@ -127,7 +127,7 @@ SELECT
   END as action_needed
 FROM admins a
 LEFT JOIN auth.users u ON a.user_id = u.id
-WHERE a.email IN ('info@pnimet.org.il', 'omri@pnimeet.org.il')
+WHERE a.email IN ('info@pnimeet.org.il', 'omri@pnimeet.org.il')
 ORDER BY a.email;
 
 -- ============================================
@@ -136,7 +136,7 @@ ORDER BY a.email;
 -- If no users appear in auth.users table:
 --   1. Go to Supabase Dashboard > Authentication > Users
 --   2. Click "Invite User"
---   3. Enter email: info@pnimet.org.il
+--   3. Enter email: info@pnimeet.org.il
 --   4. User will receive email to set password
 --   5. After user is created, run FIX OPTION 1 or 2 above
 --

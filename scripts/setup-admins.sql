@@ -3,7 +3,7 @@
 -- USAGE:
 -- 1. First, create the admin users in Supabase Dashboard:
 --    Authentication > Users > Invite User
---    - info@pnimet.org.il
+--    - info@pnimeet.org.il
 --    - omri@pnimeet.org.il
 --
 -- 2. Get their user IDs from the Authentication > Users page
@@ -16,7 +16,7 @@
 -- Replace these UUIDs with the actual auth.users IDs from your Supabase dashboard
 INSERT INTO admins (email, user_id)
 VALUES
-  ('info@pnimet.org.il', '<UUID_FOR_INFO_PNIMET>'),
+  ('info@pnimeet.org.il', '<UUID_FOR_INFO_PNIMEET>'),
   ('omri@pnimeet.org.il', '<UUID_FOR_OMRI_PNIMEET>')
 ON CONFLICT (email) DO NOTHING;
 
