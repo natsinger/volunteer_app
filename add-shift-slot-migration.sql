@@ -53,13 +53,13 @@ UPDATE recurring_shifts
 SET shift_slot = 'closing'
 WHERE day_of_week = 5
   AND shift_slot IS NULL
-  AND (title ILIKE '%clos%' OR title ILIKE '%סגיר%');  -- English + Hebrew
+  AND (title ILIKE '%clos%' OR title ILIKE '%סגירה%');  -- English + Hebrew
 
 UPDATE recurring_shifts
 SET shift_slot = 'opening'
 WHERE day_of_week = 5
   AND shift_slot IS NULL
-  AND (title ILIKE '%open%' OR title ILIKE '%פתיח%');
+  AND (title ILIKE '%open%' OR title ILIKE '%פתיחה%');
 
 -- Tuesday (day_of_week = 2)
 UPDATE recurring_shifts
