@@ -5,10 +5,12 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Create admins table to track admin users
+-- is_super_admin: only super admins can add/remove other admins (see RLS below)
 CREATE TABLE IF NOT EXISTS admins (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   email TEXT UNIQUE NOT NULL,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -89,8 +91,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Helper function to check if current user is a SUPER admin
+-- Super admins are the only ones allowed to add / remove other admins.
+CREATE OR REPLACE FUNCTION is_super_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM admins
+    WHERE user_id = auth.uid()
+      AND is_super_admin = TRUE
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Admins table policies
+-- Any admin can read their own row (so the app can check role on login).
+-- Only super admins can insert / update / delete admin records.
 CREATE POLICY "Admins can read their own record" ON admins FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Super admins can insert admins" ON admins FOR INSERT TO authenticated WITH CHECK (is_super_admin());
+CREATE POLICY "Super admins can update admins" ON admins FOR UPDATE TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+CREATE POLICY "Super admins can delete admins" ON admins FOR DELETE TO authenticated USING (is_super_admin());
 
 -- Volunteers table policies
 -- Admins can do everything
@@ -131,10 +151,10 @@ VALUES
 SELECT 'Database schema created successfully!' AS message;
 
 -- IMPORTANT: After running this schema, you need to:
--- 1. Create admin users in Supabase Auth (info@pnimet.org.il and omri@pnimeet.org.il)
+-- 1. Create admin users in Supabase Auth (info@pnimeet.org.il and omri@pnimeet.org.il)
 --    via the Supabase Dashboard > Authentication > Users > Invite User
 -- 2. After creating the admin users, insert their records into the admins table:
---    INSERT INTO admins (email, user_id) VALUES ('info@pnimet.org.il', '<user_id_from_auth>');
+--    INSERT INTO admins (email, user_id) VALUES ('info@pnimeet.org.il', '<user_id_from_auth>');
 --    INSERT INTO admins (email, user_id) VALUES ('omri@pnimeet.org.il', '<user_id_from_auth>');
 -- 3. For volunteers, when they are added via the admin dashboard, create auth users for them
 --    and link via the user_id field
