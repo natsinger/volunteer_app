@@ -65,7 +65,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // New Recurring Shift State (changed from date to dayOfWeek)
   const [newRecurringShift, setNewRecurringShift] = useState<Partial<RecurringShift>>({
-    title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1
+    title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1, shiftSlot: null
   });
 
   // Calendar Details State
@@ -291,16 +291,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
 
     try {
+      const dayOfWeek = newRecurringShift.dayOfWeek as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+      // Only persist a slot when it's relevant for this day. Friday=5 uses
+      // opening/closing; Tuesday=2 uses morning/evening. Other days ignore it.
+      const slotIsRelevant = dayOfWeek === 2 || dayOfWeek === 5;
       const recurringShift: RecurringShift = {
         id: `rs-${Date.now()}`,
         title: newRecurringShift.title,
-        dayOfWeek: newRecurringShift.dayOfWeek as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+        dayOfWeek,
         startTime: newRecurringShift.startTime || '09:00',
         endTime: newRecurringShift.endTime || '17:00',
         location: newRecurringShift.location || 'BOTH',
         requiredSkills: [],
         requiredVolunteers: newRecurringShift.requiredVolunteers || 1,
         isActive: true,
+        shiftSlot: slotIsRelevant ? (newRecurringShift.shiftSlot ?? null) : null,
       };
 
       // Convert to database format and remove id (let Supabase generate it)
@@ -344,7 +349,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       // Reset form
-      setNewRecurringShift({ title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1 });
+      setNewRecurringShift({ title: '', dayOfWeek: 1, startTime: '09:00', endTime: '17:00', location: 'BOTH', requiredVolunteers: 1, shiftSlot: null });
 
       alert(`Recurring shift created! Generated ${generateResult.totalCount || 0} shift instances for the next 3 months.`);
     } catch (err) {
@@ -1760,7 +1765,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <select
                       className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                       value={newRecurringShift.dayOfWeek}
-                      onChange={e => setNewRecurringShift({...newRecurringShift, dayOfWeek: parseInt(e.target.value) as 0 | 1 | 2 | 3 | 4 | 5 | 6})}
+                      onChange={e => {
+                        const newDay = parseInt(e.target.value) as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+                        // Clear shiftSlot when switching to a day that doesn't use it
+                        const keepSlot = newDay === 2 || newDay === 5;
+                        setNewRecurringShift({
+                          ...newRecurringShift,
+                          dayOfWeek: newDay,
+                          shiftSlot: keepSlot ? (newRecurringShift.shiftSlot ?? null) : null,
+                        });
+                      }}
                     >
                       <option value={0}>Sunday</option>
                       <option value={1}>Monday</option>
@@ -1771,6 +1785,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <option value={6}>Saturday</option>
                     </select>
                   </div>
+                  {/* Slot picker — only for Tuesday (morning/evening) and Friday (opening/closing).
+                      The scheduler uses this tag to match volunteer preferences like '5_closing'
+                      directly, instead of guessing from start_time. */}
+                  {(newRecurringShift.dayOfWeek === 2 || newRecurringShift.dayOfWeek === 5) && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Slot
+                        <span className="text-xs text-slate-500 font-normal ml-1">
+                          (matches volunteer preferences)
+                        </span>
+                      </label>
+                      <select
+                        className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        value={newRecurringShift.shiftSlot ?? ''}
+                        onChange={e => setNewRecurringShift({
+                          ...newRecurringShift,
+                          shiftSlot: (e.target.value || null) as RecurringShift['shiftSlot'],
+                        })}
+                      >
+                        <option value="">— (use start time to guess)</option>
+                        {newRecurringShift.dayOfWeek === 5 && (
+                          <>
+                            <option value="opening">Opening (Friday)</option>
+                            <option value="closing">Closing (Friday)</option>
+                          </>
+                        )}
+                        {newRecurringShift.dayOfWeek === 2 && (
+                          <>
+                            <option value="morning">Morning (Tuesday)</option>
+                            <option value="evening">Evening (Tuesday)</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
                     <select
