@@ -260,6 +260,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       // Capture initial state for change detection
       setInitialAssignments([...assignments]);
       setSelectedOptionId(optionId);
+      // A freshly generated option is a draft — not yet in the database — so
+      // mark it unapplied. This keeps later manual edits local until the admin
+      // clicks "Apply to Database", and stops volunteers seeing it early.
+      setAssignmentsApplied(false);
       setShowOptionsModal(false);
       setScheduleResultView('calendar');
     }
@@ -1014,7 +1018,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     // Update local state
     setGeneratedAssignments(prev => [...prev, { shiftId, volunteerId }]);
 
-    // Update database
+    // Only write to the database when the schedule is already published/applied.
+    // While the schedule is still a draft, edits stay local until "Apply to
+    // Database" — otherwise volunteers would see assignments before publishing
+    // (they read the shift_assignments table directly).
+    if (!assignmentsApplied) return;
+
     const result = await dbAddVolunteerToShift(shiftId, volunteerId);
     if (!result.success) {
       console.error('Failed to add volunteer to shift in database:', result.error);
@@ -1032,8 +1041,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       prev.filter(a => !(a.shiftId === shiftId && a.volunteerId === volunteerId))
     );
 
-    // Only try to update database if assignments have been applied
-    // If we're editing a draft schedule, the assignment might not exist in DB yet
+    // Only touch the database when the schedule is already published/applied.
+    // Draft edits stay local until "Apply to Database" so volunteers never see
+    // assignments before publishing (they read shift_assignments directly).
+    if (!assignmentsApplied) {
+      console.log('[AdminDashboard] Draft schedule - removal kept local only');
+      return;
+    }
+
     const result = await dbRemoveVolunteerFromShift(shiftId, volunteerId);
     console.log('[AdminDashboard] Remove result:', result);
 

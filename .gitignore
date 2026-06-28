@@ -34,3 +34,6 @@ dist-ssr
 
 # Vercel
 .vercel
+
+# Scratch / temporary work
+tmp/
