@@ -43,6 +43,7 @@ export function generateShiftInstances(
             requiredSkills: recurringShift.requiredSkills,
             assignedVolunteerId: null,
             status: 'Open',
+            shiftSlot: recurringShift.shiftSlot ?? null,
           });
         }
       }

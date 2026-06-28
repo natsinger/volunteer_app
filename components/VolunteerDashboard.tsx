@@ -9,6 +9,7 @@ import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
 import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
+import { canVolunteerWorkShift } from '../services/geminiService';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -609,38 +610,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   console.log('[VolunteerDashboard] My shifts from shift_assignments (My Shifts tab):');
   myShifts.forEach(s => console.log(`  - ${s.date}: ${s.title} (${s.startTime} - ${s.endTime})`));
 
-  // Helper function to check if volunteer can work a shift
-  const canWorkShift = (shift: Shift): boolean => {
-    // Check location compatibility
-    if (currentUser.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
-      if (currentUser.preferredLocation !== shift.location) return false;
-    }
-
-    // Check day preference
-    const date = new Date(shift.date);
-    const dayOfWeek = date.getDay(); // 0 = Sunday
-    const hour = parseInt(shift.startTime.split(':')[0], 10);
-
-    // Check for Tuesday morning/evening split
-    let dayCode: string;
-    if (dayOfWeek === 2) {
-      dayCode = hour < 16 ? '2_morning' : '2_evening';
-    } else {
-      dayCode = dayOfWeek.toString();
-    }
-
-    if (!currentUser.preferredDays.includes(dayCode)) return false;
-
-    // Check blackout dates
-    if (currentUser.blackoutDates.includes(shift.date)) return false;
-
-    // Check only dates - if specified, volunteer can ONLY work these specific dates
-    if (currentUser.onlyDates.length > 0 && !currentUser.onlyDates.includes(shift.date)) {
-      return false;
-    }
-
-    return true;
-  };
+  // Use the shared eligibility check from geminiService — handles Friday
+  // opening/closing and Tuesday morning/evening via shift.shiftSlot, and
+  // stays in sync with the scheduling algorithm. Keeping a local copy was
+  // the source of the previous Friday-opening/closing bug.
+  const canWorkShift = (shift: Shift): boolean => canVolunteerWorkShift(currentUser, shift);
 
   // Show open shifts that the volunteer could potentially work
   const openShifts = shifts
@@ -1353,15 +1327,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                         <span className="font-semibold truncate text-[10px] sm:text-xs text-slate-800">
                                           {shift.startTime.slice(0,5)}
                                         </span>
-                                        {new Date(dateStr).getDay() === 5 && (
-                                          <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
-                                            parseInt(shift.startTime.split(':')[0], 10) < 14
-                                              ? 'bg-amber-200 text-amber-800'
-                                              : 'bg-violet-200 text-violet-800'
-                                          }`}>
-                                            {parseInt(shift.startTime.split(':')[0], 10) < 14 ? 'Opening' : 'Closing'}
-                                          </span>
-                                        )}
+                                        {new Date(dateStr).getDay() === 5 && (() => {
+                                          // Prefer the explicit slot tag; fall back to start-time heuristic.
+                                          const isOpening = shift.shiftSlot
+                                            ? shift.shiftSlot === 'opening'
+                                            : parseInt(shift.startTime.split(':')[0], 10) < 14;
+                                          return (
+                                            <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
+                                              isOpening ? 'bg-amber-200 text-amber-800' : 'bg-violet-200 text-violet-800'
+                                            }`}>
+                                              {isOpening ? 'Opening' : 'Closing'}
+                                            </span>
+                                          );
+                                        })()}
                                         {isMyShift && (
                                           <span className="w-2 h-2 rounded-full bg-indigo-600 flex-shrink-0" title="Your Shift"></span>
                                         )}

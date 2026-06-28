@@ -18,6 +18,16 @@ export interface Volunteer {
   notes?: string; // Free-text notes about availability
 }
 
+/**
+ * Explicit slot tag for shifts that split a single day into multiple
+ * preference slots (Friday opening/closing, Tuesday morning/evening).
+ *
+ * When set, the scheduler uses this tag as the source of truth for matching
+ * `preferredDays` codes like '5_opening' / '5_closing' / '2_morning' /
+ * '2_evening'. When NULL, the scheduler falls back to a time-based heuristic.
+ */
+export type ShiftSlot = 'opening' | 'closing' | 'morning' | 'evening';
+
 export interface RecurringShift {
   id: string;
   title: string;
@@ -28,6 +38,7 @@ export interface RecurringShift {
   requiredSkills: string[];
   requiredVolunteers: number;
   isActive: boolean;
+  shiftSlot?: ShiftSlot | null; // Optional explicit slot tag; see ShiftSlot
 }
 
 export interface Shift {
@@ -41,6 +52,7 @@ export interface Shift {
   requiredSkills: string[];
   assignedVolunteerId?: string | null;
   status: 'Open' | 'Assigned' | 'Completed';
+  shiftSlot?: ShiftSlot | null; // Inherited from RecurringShift when generated
 }
 
 export interface DeletedShiftOccurrence {
