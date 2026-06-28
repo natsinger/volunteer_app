@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload } from 'lucide-react';
+import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload, CalendarCheck, AlertTriangle, Pencil } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event, EventAttendance } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
 import { loadPublishedSchedules, loadScheduleAssignments } from '../services/scheduleHistoryService';
@@ -10,6 +10,7 @@ import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
 import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
+import { SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END } from '../constants';
 
 interface VolunteerDashboardProps {
   currentUser: Volunteer;
@@ -616,6 +617,48 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   // the source of the previous Friday-opening/closing bug.
   const canWorkShift = (shift: Shift): boolean => canVolunteerWorkShift(currentUser, shift);
 
+  // --- Option A: location styling + placement summary (derived, no new data) ---
+  const LOCATION_META = {
+    DIZENGOFF: { label: 'Dizengoff', chip: 'bg-indigo-50 text-indigo-700', border: 'border-indigo-500', tint: 'bg-indigo-50 border-indigo-100', text: 'text-indigo-900', accent: 'text-indigo-600' },
+    HATACHANA: { label: 'Hatachana', chip: 'bg-teal-50 text-teal-700',   border: 'border-teal-500',   tint: 'bg-teal-50 border-teal-100',   text: 'text-teal-900',   accent: 'text-teal-600' },
+  } as const;
+  const DEFAULT_META = { label: 'Other', chip: 'bg-slate-100 text-slate-700', border: 'border-slate-400', tint: 'bg-slate-50 border-slate-200', text: 'text-slate-900', accent: 'text-slate-600' };
+  const locMeta = (loc?: string | null) => (loc && (LOCATION_META as any)[loc]) || DEFAULT_META;
+
+  // Group the volunteer's upcoming assigned shifts by location (myShifts is already filtered + sorted asc)
+  const shiftsByLocation = myShifts.reduce((acc, s) => {
+    const key = s.location || 'OTHER';
+    (acc[key] = acc[key] || []).push(s);
+    return acc;
+  }, {} as Record<string, Shift[]>);
+  const placementLocations = Object.keys(shiftsByLocation);
+  const nextShift = myShifts[0] || null;
+
+  const weekdayName = (dateStr: string) => new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
+  const locationPattern = (list: Shift[]) => {
+    const days = Array.from(new Set(list.map(s => weekdayName(s.date))));
+    return days.length <= 2 ? days.join(' & ') : `${days.length} days`;
+  };
+  // Clearer per-shift label than the generic "DIZENGOFF Shift" title
+  const shiftLabel = (s: Shift) => {
+    const day = weekdayName(s.date);
+    const hour = parseInt((s.startTime || '0').split(':')[0], 10);
+    const part = hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : 'Evening';
+    return `${day} ${part}`;
+  };
+
+  // --- Availability reminder: next month's schedule is built a few days before
+  // month-end. Remind volunteers who haven't updated their availability this
+  // month, and only until that cutoff has passed. ---
+  const now = new Date();
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const cutoffDate = new Date(now.getFullYear(), now.getMonth(), lastDayOfMonth.getDate() - SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const updatedThisMonth = currentUser.updatedAt ? new Date(currentUser.updatedAt) >= startOfMonth : false;
+  const availabilityPeriodLabel = new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-US', { month: 'long' });
+  const availabilityDeadlineLabel = cutoffDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+  const needsAvailabilityUpdate = now <= cutoffDate && !updatedThisMonth;
+
   // Show open shifts that the volunteer could potentially work
   const openShifts = shifts
     .filter(s => s.status === 'Open' && isShiftUpcoming(s.date) && !myShiftIds.has(s.id))
@@ -840,40 +883,65 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       <div className="max-w-5xl mx-auto p-3 sm:p-6 md:p-12 pb-24">
 
         {/* Profile Header */}
-        <div className="bg-white rounded-2xl p-4 sm:p-6 md:p-8 shadow-sm border border-slate-200 mb-6 sm:mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 md:p-8 shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6">
           <div className="flex items-center gap-3 sm:gap-4">
             {currentUser.avatarUrl ? (
-              <img
-                src={currentUser.avatarUrl}
-                alt={currentUser.name}
-                className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover flex-shrink-0 border-2 border-indigo-200"
-              />
+              <img src={currentUser.avatarUrl} alt={currentUser.name} className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover flex-shrink-0 border-2 border-indigo-200" />
             ) : (
               <div className="w-12 h-12 sm:w-16 sm:h-16 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-lg sm:text-xl font-bold flex-shrink-0">
                 {currentUser.name.charAt(0)}
               </div>
             )}
             <div className="min-w-0">
-              <h1 className="text-lg sm:text-2xl font-bold text-slate-900 truncate">Welcome, {currentUser.name}!</h1>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className="text-xs sm:text-sm text-slate-500 truncate">{currentUser.email}</span>
-                <span className="w-1 h-1 bg-slate-300 rounded-full hidden sm:block"></span>
-                <span className="text-xs sm:text-sm bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
+              <h1 className="text-lg sm:text-2xl font-bold text-slate-900 truncate">Welcome back, {currentUser.name.split(' ')[0]}</h1>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {placementLocations.map(loc => (
+                  <span key={loc} className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-0.5 rounded-full ${locMeta(loc).chip}`}>
+                    <MapPin size={11} /> {locMeta(loc).label}
+                  </span>
+                ))}
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                   {currentUser.availabilityStatus}
                 </span>
               </div>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setEditForm(currentUser);
-              setIsEditing(true);
-            }}
-            className="w-full md:w-auto text-indigo-600 font-medium hover:bg-indigo-50 px-4 py-2 rounded-lg transition-colors border border-indigo-200 text-sm sm:text-base text-center"
-          >
-            Edit Profile & Availability
-          </button>
+          <div className="flex gap-2 w-full md:w-auto">
+            <button
+              onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg transition-colors text-sm sm:text-base shadow-sm"
+            >
+              <CalendarCheck size={18} /> Update Availability
+            </button>
+            <button
+              onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
+              className="flex items-center justify-center gap-2 text-slate-600 hover:bg-slate-50 font-medium px-4 py-2.5 rounded-lg transition-colors border border-slate-200 text-sm sm:text-base"
+            >
+              <Pencil size={16} /> <span className="hidden sm:inline">Edit Profile</span>
+            </button>
+          </div>
         </div>
+
+        {/* Availability reminder — shown only when an update is due */}
+        {needsAvailabilityUpdate && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="text-amber-600 flex-shrink-0 mt-0.5" size={22} />
+              <div>
+                <p className="font-semibold text-amber-900 text-sm sm:text-base">Set your {availabilityPeriodLabel} availability</p>
+                <p className="text-amber-700 text-xs sm:text-sm mt-0.5">
+                  The schedule is built on {availabilityDeadlineLabel} — update by then so you're placed on the right shifts.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors"
+            >
+              Update Availability
+            </button>
+          </div>
+        )}
 
         {/* Tab Navigation */}
         <div className="mb-6 bg-white rounded-xl shadow-sm border border-slate-200 p-1 flex gap-1">
@@ -908,6 +976,45 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         {/* My Shifts Tab Content */}
         {activeTab === 'my-shifts' && (
           <>
+          {/* Placement hero — what/where you're assigned, at a glance */}
+          {myShifts.length > 0 && (
+            <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-sm border border-slate-200 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-bold text-slate-900">Your placement</h2>
+                <span className="text-xs font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full">
+                  {myShifts.length} upcoming shift{myShifts.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="space-y-2.5">
+                {placementLocations.map(loc => {
+                  const m = locMeta(loc);
+                  const list = shiftsByLocation[loc];
+                  return (
+                    <div key={loc} className={`flex items-center justify-between rounded-xl border border-l-4 ${m.tint} ${m.border} px-4 py-3`}>
+                      <div className="flex items-center gap-3">
+                        <MapPin size={17} className={m.accent} />
+                        <div>
+                          <p className={`font-bold text-sm ${m.text}`}>{m.label}</p>
+                          <p className={`text-xs ${m.accent}`}>{locationPattern(list)}</p>
+                        </div>
+                      </div>
+                      <p className={`text-sm ${m.text}`}>
+                        <span className="font-extrabold">{list.length}</span> shift{list.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              {nextShift && (
+                <p className="mt-3 pt-3 border-t border-slate-100 text-sm text-slate-600">
+                  Next shift: <span className="font-semibold text-slate-900">{formatDateDDMMYYYY(nextShift.date)} · {nextShift.startTime}</span>
+                  {nextShift.location && (
+                    <> · <span className={`font-semibold ${locMeta(nextShift.location).accent}`}>{locMeta(nextShift.location).label}</span></>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
             {/* My Upcoming Shifts */}
@@ -953,14 +1060,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                   const otherVolunteers = shiftTeam.filter(v => v.id !== currentUser.id);
 
                   return (
-                    <div key={shift.id} className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border-l-4 border-indigo-500 hover:shadow-md transition-shadow">
+                    <div key={shift.id} className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border-l-4 ${locMeta(shift.location).border} hover:shadow-md transition-shadow`}>
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-bold text-base sm:text-lg text-slate-900 mb-2">{shift.title}</h3>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold tracking-wide px-2.5 py-1 rounded-md ${locMeta(shift.location).chip}`}>
+                              <MapPin size={11} /> {locMeta(shift.location).label.toUpperCase()}
+                            </span>
+                          </div>
+                          <h3 className="font-bold text-base sm:text-lg text-slate-900 mb-2">{shiftLabel(shift)}</h3>
                           <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-slate-600 mb-3">
                             <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Calendar size={14}/> {formatDateDDMMYYYY(shift.date)}</span>
                             <span className="flex items-center gap-1.5 text-xs sm:text-sm"><Clock size={14}/> {shift.startTime} - {shift.endTime}</span>
-                            {shift.location && <span className="flex items-center gap-1.5 text-xs sm:text-sm"><MapPin size={14}/> {shift.location}</span>}
+                            {/* location removed from here — it's now the chip above */}
                           </div>
                           {/* Team Members Display */}
                           {shiftTeam.length > 0 && (
