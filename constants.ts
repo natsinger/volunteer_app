@@ -114,3 +114,7 @@ const generateMockShifts = (): Shift[] => {
 export const MOCK_SHIFTS: Shift[] = generateMockShifts();
 
 export const SKILL_OPTIONS = ['First Aid', 'Crowd Control', 'Logistics', 'Driving', 'Leadership', 'Cooking', 'Registration'];
+
+// Next month's schedule is built this many days before the end of the current
+// month. Volunteers are reminded to set their availability before this cutoff.
+export const SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END = 3;
