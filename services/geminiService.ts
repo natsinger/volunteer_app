@@ -172,7 +172,7 @@ function enforceCapacityLimits(
  * Does multiple passes until all shifts are filled or no capacity remains
  * @param randomize - If true, adds randomization to volunteer ordering within skill level groups
  */
-function scheduleShiftsMultiPass(
+export function scheduleShiftsMultiPass(
   volunteers: Volunteer[],
   shifts: Shift[],
   randomize: boolean = false
@@ -191,6 +191,10 @@ function scheduleShiftsMultiPass(
   // Track which dates each volunteer is assigned to (for same-day/same-week checks)
   const volunteerAssignedDates = new Map<string, string[]>();
   volunteers.forEach(v => volunteerAssignedDates.set(v.id, []));
+
+  // Fast skill-level lookup (used by the per-shift experience balancing below).
+  const volunteerSkill = new Map<string, number>();
+  volunteers.forEach(v => volunteerSkill.set(v.id, v.skillLevel));
 
   // Sort volunteers by skill level: NOVICE (1) first, then 2, then EXPERIENCED (3)
   // Within same skill level, sort by capacity (higher capacity first) or randomize
@@ -318,84 +322,94 @@ function scheduleShiftsMultiPass(
     }
 
     for (const shift of sortedShifts) {
-      const currentAssignees = shiftAssignments.get(shift.id) || [];
+      // Greedily fill this shift one volunteer at a time, re-evaluating the
+      // experience mix after every pick. Scoring the whole candidate list once
+      // up front cannot balance within a shift (the counts wouldn't change
+      // between picks), so instead we choose the single best candidate, assign
+      // it, then recompute and repeat.
+      while (true) {
+        const currentAssignees = shiftAssignments.get(shift.id) || [];
 
-      // Max 5 volunteers per shift
-      if (currentAssignees.length >= 5) continue;
+        // Hard limit: no more than 5 volunteers per shift.
+        if (currentAssignees.length >= 5) break;
 
-      // Calculate current experience level distribution on this shift
-      const currentSkillLevels = currentAssignees.map(id => {
-        const vol = volunteers.find(v => v.id === id);
-        return vol?.skillLevel || 1;
-      });
-      const noviceCount = currentSkillLevels.filter(s => s === 1).length;
-      const intermediateCount = currentSkillLevels.filter(s => s === 2).length;
-      const experiencedCount = currentSkillLevels.filter(s => s === 3).length;
+        // Current experience-level distribution on this shift.
+        let noviceCount = 0, intermediateCount = 0, experiencedCount = 0;
+        for (const id of currentAssignees) {
+          const lvl = volunteerSkill.get(id) || 1;
+          if (lvl === 1) noviceCount++;
+          else if (lvl === 2) intermediateCount++;
+          else experiencedCount++;
+        }
+        const hasExperienced = experiencedCount > 0;
+        const hasSenior = experiencedCount > 0 || intermediateCount > 0;
 
-      // Sort volunteers to prefer those who balance the shift
-      // Priority: If shift has mostly novices, prefer experienced volunteers
-      let volunteersForThisShift = [...currentPassVolunteers];
-      if (currentAssignees.length >= 2) {
-        volunteersForThisShift.sort((a, b) => {
-          // Calculate balance score (higher = better for this shift)
-          const getBalanceScore = (vol: Volunteer) => {
-            let score = 0;
-            // If we have many novices and few experienced, prefer experienced
-            if (noviceCount >= 2 && experiencedCount === 0) {
-              if (vol.skillLevel === 3) score += 10;
-              if (vol.skillLevel === 2) score += 5;
-            }
-            // If we have many experienced and few novices, prefer novices
-            if (experiencedCount >= 2 && noviceCount === 0) {
-              if (vol.skillLevel === 1) score += 10;
-              if (vol.skillLevel === 2) score += 5;
-            }
-            // If balanced or first few assignments, slightly prefer novices (to ensure they get shifts)
-            if (noviceCount === 0 && currentAssignees.length < 2) {
-              if (vol.skillLevel === 1) score += 3;
-            }
-            return score;
-          };
-          return getBalanceScore(b) - getBalanceScore(a);
-        });
-      }
+        // Score a candidate for how well it balances THIS shift right now.
+        const getBalanceScore = (vol: Volunteer): number => {
+          let score = 0;
 
-      // Try to assign volunteers with balanced experience levels
-      for (const volunteer of volunteersForThisShift) {
-        // Skip if already assigned to this shift
-        if (currentAssignees.includes(volunteer.id)) continue;
+          // 1. Guarantee experience coverage: until the shift has an experienced
+          //    (level 3) volunteer, strongly prefer adding one. A level-2
+          //    (intermediate) is partial coverage and gets a smaller boost.
+          if (!hasExperienced) {
+            if (vol.skillLevel === 3) score += 20;
+            else if (vol.skillLevel === 2) score += 8;
+          }
 
-        // Check if volunteer can work this shift
-        if (!canWorkShift(volunteer, shift)) continue;
+          // 2. Don't stack novices on a shift that has no senior support yet.
+          if (!hasSenior && vol.skillLevel === 1) score -= 15;
 
-        // Assign!
-        const skillLabel = volunteer.skillLevel === 1 ? 'NOVICE' : volunteer.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
+          // 3. Once the shift has experience, give the next slot to a novice so
+          //    experienced volunteers spread across shifts (mentoring) instead of
+          //    clustering on a few.
+          if (hasExperienced && noviceCount === 0 && vol.skillLevel === 1) score += 10;
+
+          // 4. Avoid over-clustering any single experience level on one shift.
+          if (vol.skillLevel === 1 && noviceCount >= 2) score -= 5;
+          if (vol.skillLevel === 3 && experiencedCount >= 2) score -= 8;
+
+          return score;
+        };
+
+        // Pick the highest-scoring eligible volunteer. Ties fall back to the
+        // pass ordering (first one encountered wins), preserving the existing
+        // novice-first / randomised behaviour for already-balanced shifts.
+        let best: Volunteer | null = null;
+        let bestScore = -Infinity;
+        for (const volunteer of currentPassVolunteers) {
+          if (currentAssignees.includes(volunteer.id)) continue;
+          if (!canWorkShift(volunteer, shift)) continue;
+          const score = getBalanceScore(volunteer);
+          if (score > bestScore) {
+            bestScore = score;
+            best = volunteer;
+          }
+        }
+
+        if (!best) break; // No eligible volunteer left for this shift.
+
+        // Assign the chosen volunteer.
+        const skillLabel = best.skillLevel === 1 ? 'NOVICE' : best.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
         assignments.push({
           shiftId: shift.id,
-          volunteerId: volunteer.id,
-          reasoning: `Pass ${passNumber}: ${volunteer.name} (${skillLabel}) assigned to ${shift.date} - Balancing experience levels`
+          volunteerId: best.id,
+          reasoning: `Pass ${passNumber}: ${best.name} (${skillLabel}) assigned to ${shift.date} - Balancing experience levels`
         });
 
-        currentAssignees.push(volunteer.id);
+        currentAssignees.push(best.id);
         shiftAssignments.set(shift.id, currentAssignees);
-        capacityUsed.set(volunteer.id, (capacityUsed.get(volunteer.id) || 0) + 1);
+        capacityUsed.set(best.id, (capacityUsed.get(best.id) || 0) + 1);
         assignmentsMade = true;
 
-        // Track assigned date for same-day/same-week constraint checks
-        const currentAssignedDates = volunteerAssignedDates.get(volunteer.id) || [];
+        // Track assigned date for same-day/same-week constraint checks.
+        const currentAssignedDates = volunteerAssignedDates.get(best.id) || [];
         currentAssignedDates.push(shift.date);
-        volunteerAssignedDates.set(volunteer.id, currentAssignedDates);
+        volunteerAssignedDates.set(best.id, currentAssignedDates);
 
-        // Break if we've reached the maximum of 5 volunteers for this shift
-        if (currentAssignees.length >= 5) {
-          break; // Hard limit: no more than 5 volunteers per shift
-        }
-
-        // For passes 1-2, prioritize breadth (3 volunteers per shift)
-        // After that, continue adding to utilize all capacity
-        if (passNumber <= 2 && currentAssignees.length >= 3) {
-          break; // Move to next shift to spread volunteers
-        }
+        // Passes 1-2 prioritise breadth: once a shift has 3 volunteers, move on
+        // so others get seeded before any shift is filled to capacity. Later
+        // passes (3+) come back and fill remaining slots up to the max of 5.
+        if (passNumber <= 2 && currentAssignees.length >= 3) break;
       }
     }
 
