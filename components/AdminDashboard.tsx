@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck, Copy
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
 import { generateScheduleAI, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import { getEffectiveCapacity, isMonthFullyBlocked } from '../lib/capacityUtils';
+import { getEligibilityIssues, ELIGIBILITY_ISSUE_LABELS } from '../lib/availabilityUtils';
 import { getTodayStr } from '../lib/dateUtils';
+import { ADMIN_DAY_OPTIONS } from '../constants';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import EventModalForm from './EventModalForm';
@@ -31,17 +33,7 @@ interface AdminDashboardProps {
   setShifts: React.Dispatch<React.SetStateAction<Shift[]>>;
 }
 
-const DAYS = [
-  { id: '0', label: 'Sun' },
-  { id: '1', label: 'Mon' },
-  { id: '2_morning', label: 'Tue (AM)' },
-  { id: '2_evening', label: 'Tue (PM)' },
-  { id: '3', label: 'Wed' },
-  { id: '4', label: 'Thu' },
-  { id: '5_opening', label: 'Fri (Open)' },
-  { id: '5_closing', label: 'Fri (Close)' },
-  { id: '6', label: 'Sat' },
-];
+const DAYS = ADMIN_DAY_OPTIONS;
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   volunteers, shifts, setVolunteers, setShifts
@@ -78,6 +70,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Calendar Details State
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
   const [selectedEventForDetails, setSelectedEventForDetails] = useState<Event | null>(null);
+  const [showOverrideVolunteers, setShowOverrideVolunteers] = useState(false);
+
+  // Collapse the override list whenever a different shift is opened
+  useEffect(() => {
+    setShowOverrideVolunteers(false);
+  }, [selectedShiftForDetails?.id]);
 
   // Delete Confirmation State
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'volunteer' | 'shift', id: string, name?: string } | null>(null);
@@ -95,6 +93,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [events, setEvents] = useState<Event[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [eventModalMode, setEventModalMode] = useState<'create' | 'edit' | 'duplicate'>('create');
   const [eventAttendances, setEventAttendances] = useState<EventAttendance[]>([]);
 
   // Auto-Scheduler State: Default to Next Month
@@ -671,11 +670,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleCreateEvent = () => {
     setEditingEvent(null);
+    setEventModalMode('create');
     setShowEventModal(true);
   };
 
   const handleEditEvent = (event: Event) => {
     setEditingEvent(event);
+    setEventModalMode('edit');
+    setShowEventModal(true);
+  };
+
+  // Duplicate: prefill the form from an existing event; saving creates a new draft
+  const handleDuplicateEvent = (event: Event) => {
+    setEditingEvent(event);
+    setEventModalMode('duplicate');
     setShowEventModal(true);
   };
 
@@ -1909,6 +1917,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <Edit2 size={18} />
                         </button>
                         <button
+                          onClick={() => handleDuplicateEvent(event)}
+                          className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                          title="Duplicate event"
+                        >
+                          <Copy size={18} />
+                        </button>
+                        <button
                           onClick={() => handleDeleteEvent(event.id)}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                         >
@@ -2231,115 +2246,175 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                          .map(a => a.volunteerId)
                      );
 
-                     const availableVolunteers = volunteers
-                       .filter(v => v.availabilityStatus === 'Active')
-                       .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails)) // Only show volunteers who can work this shift
-                       .filter(v => !volunteersWithShiftsThisWeek.has(v.id)) // Exclude volunteers with shifts in the same week
-                       .map(vol => {
-                         const capacity = getMonthEffectiveCapacity(vol);
-                         const assignedCount = generatedAssignments.filter(a => {
-                           const shift = shifts.find(s => s.id === a.shiftId);
-                           return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
-                         }).length;
-                         const utilization = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
+                     const decorate = (vol: Volunteer) => {
+                       const capacity = getMonthEffectiveCapacity(vol);
+                       const assignedCount = generatedAssignments.filter(a => {
+                         const shift = shifts.find(s => s.id === a.shiftId);
+                         return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
+                       }).length;
+                       const utilization = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
+                       return { ...vol, capacity, assignedCount, utilization };
+                     };
 
-                         return {
-                           ...vol,
-                           capacity,
-                           assignedCount,
-                           utilization,
-                           isAlreadyAssigned: assignedVolunteerIds.has(vol.id),
-                         };
-                       })
-                       .sort((a, b) => {
-                         // Sort: unassigned first, then by utilization
-                         if (a.isAlreadyAssigned && !b.isAlreadyAssigned) return 1;
-                         if (!a.isAlreadyAssigned && b.isAlreadyAssigned) return -1;
-                         return a.utilization - b.utilization;
-                       });
-
-                     return availableVolunteers.length > 0 ? (
-                       availableVolunteers.map(vol => (
-                         <div key={vol.id} className={`p-2 rounded-lg border transition-colors ${
-                           vol.isAlreadyAssigned
-                             ? 'bg-indigo-50 border-indigo-200'
-                             : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                         }`}>
-                          <div className="flex items-center justify-between">
-                           <div className="flex items-center gap-2 flex-1">
-                             <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-                               vol.isAlreadyAssigned
-                                 ? 'bg-indigo-200 text-indigo-700'
-                                 : 'bg-slate-200 text-slate-700'
-                             }`}>
-                               {vol.name.charAt(0)}
-                             </div>
-                             <div className="flex-1">
-                               <div className="flex items-center gap-2">
-                                 <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
-                                 {vol.isAlreadyAssigned && (
-                                   <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium">
-                                     Already Assigned
-                                   </span>
-                                 )}
-                               </div>
-                               <div className="text-xs text-slate-500">
-                                 {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
-                               </div>
-                             </div>
-                           </div>
-                           {!vol.isAlreadyAssigned && (
-                             <button
-                               onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
-                               className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
-                               title="Add to shift"
-                             >
-                               <UserPlus size={16} />
-                             </button>
-                           )}
-                          </div>
-                          <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
-                            <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                              vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
-                              vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
-                              'bg-purple-100 text-purple-700'
-                            }`}>
-                              {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
-                            </span>
-                            {vol.preferredDays.map(dayId => {
-                              const day = DAYS.find(d => d.id === dayId);
-                              return day ? (
-                                <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
-                                  {day.label}
-                                </span>
-                              ) : null;
-                            })}
-                          </div>
-                          {(() => {
-                            const assignedDates = generatedAssignments
-                              .filter(a => {
-                                if (a.volunteerId !== vol.id) return false;
-                                const s = shifts.find(sh => sh.id === a.shiftId);
-                                return s && s.date.startsWith(targetMonthStr);
-                              })
-                              .map(a => {
-                                const s = shifts.find(sh => sh.id === a.shiftId);
-                                return s ? parseInt(s.date.split('-')[2], 10) : 0;
-                              })
-                              .filter(d => d > 0)
-                              .sort((a, b) => a - b);
-                            return assignedDates.length > 0 ? (
-                              <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
-                                Assigned: {assignedDates.join(', ')}
-                              </div>
-                            ) : null;
-                          })()}
+                     const assignedDatesLine = (volId: string) => {
+                       const assignedDates = generatedAssignments
+                         .filter(a => {
+                           if (a.volunteerId !== volId) return false;
+                           const s = shifts.find(sh => sh.id === a.shiftId);
+                           return s && s.date.startsWith(targetMonthStr);
+                         })
+                         .map(a => {
+                           const s = shifts.find(sh => sh.id === a.shiftId);
+                           return s ? parseInt(s.date.split('-')[2], 10) : 0;
+                         })
+                         .filter(d => d > 0)
+                         .sort((a, b) => a - b);
+                       return assignedDates.length > 0 ? (
+                         <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
+                           Assigned: {assignedDates.join(', ')}
                          </div>
-                       ))
-                     ) : (
-                       <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
-                         No available volunteers for this shift.
+                       ) : null;
+                     };
+
+                     const prefChips = (vol: Volunteer) => (
+                       <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                         <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                           vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
+                           vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
+                           'bg-purple-100 text-purple-700'
+                         }`}>
+                           {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
+                         </span>
+                         {vol.preferredDays.map(dayId => {
+                           const day = DAYS.find(d => d.id === dayId);
+                           return day ? (
+                             <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+                               {day.label}
+                             </span>
+                           ) : null;
+                         })}
                        </div>
+                     );
+
+                     // Volunteers already on this shift live in the left column
+                     const activeCandidates = volunteers
+                       .filter(v => v.availabilityStatus === 'Active')
+                       .filter(v => !assignedVolunteerIds.has(v.id));
+
+                     const matchingVolunteers = activeCandidates
+                       .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails))
+                       .filter(v => !volunteersWithShiftsThisWeek.has(v.id))
+                       .map(decorate)
+                       .sort((a, b) => a.utilization - b.utilization);
+
+                     // Everyone else, with the reasons they don't match — admin can override-add
+                     const matchingIds = new Set(matchingVolunteers.map(m => m.id));
+                     const overrideVolunteers = activeCandidates
+                       .filter(v => !matchingIds.has(v.id))
+                       .map(vol => {
+                         const d = decorate(vol);
+                         const issues: string[] = getEligibilityIssues(vol, selectedShiftForDetails)
+                           .map(issue => ELIGIBILITY_ISSUE_LABELS[issue]);
+                         if (volunteersWithShiftsThisWeek.has(vol.id)) issues.push('Already scheduled this week');
+                         if (d.assignedCount >= d.capacity) issues.push('At capacity');
+                         return { ...d, issues };
+                       })
+                       .sort((a, b) => a.issues.length - b.issues.length);
+
+                     const handleOverrideAdd = (vol: { id: string; name: string; issues: string[] }) => {
+                       const confirmed = confirm(
+                         `${vol.name} does not match this shift:\n• ${vol.issues.join('\n• ')}\n\nAdd anyway?`
+                       );
+                       if (confirmed) {
+                         handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id);
+                       }
+                     };
+
+                     return (
+                       <>
+                         {matchingVolunteers.length > 0 ? (
+                           matchingVolunteers.map(vol => (
+                             <div key={vol.id} className="p-2 rounded-lg border transition-colors bg-slate-50 border-slate-200 hover:bg-slate-100">
+                              <div className="flex items-center justify-between">
+                               <div className="flex items-center gap-2 flex-1">
+                                 <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-slate-200 text-slate-700">
+                                   {vol.name.charAt(0)}
+                                 </div>
+                                 <div className="flex-1">
+                                   <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
+                                   <div className="text-xs text-slate-500">
+                                     {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                   </div>
+                                 </div>
+                               </div>
+                               <button
+                                 onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
+                                 className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                 title="Add to shift"
+                               >
+                                 <UserPlus size={16} />
+                               </button>
+                              </div>
+                              {prefChips(vol)}
+                              {assignedDatesLine(vol.id)}
+                             </div>
+                           ))
+                         ) : (
+                           <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
+                             No matching volunteers for this shift.
+                           </div>
+                         )}
+
+                         {/* Override section: volunteers whose preferences/constraints don't match */}
+                         {overrideVolunteers.length > 0 && (
+                           <div className="pt-2">
+                             <button
+                               onClick={() => setShowOverrideVolunteers(prev => !prev)}
+                               className="w-full text-left text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors flex items-center gap-2"
+                             >
+                               <AlertTriangle size={14} />
+                               {showOverrideVolunteers ? 'Hide' : 'Show'} non-matching volunteers ({overrideVolunteers.length}) — override
+                             </button>
+                             {showOverrideVolunteers && (
+                               <div className="space-y-2 mt-2">
+                                 {overrideVolunteers.map(vol => (
+                                   <div key={vol.id} className="p-2 rounded-lg border bg-amber-50/60 border-amber-200">
+                                    <div className="flex items-center justify-between">
+                                     <div className="flex items-center gap-2 flex-1">
+                                       <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-amber-200 text-amber-800">
+                                         {vol.name.charAt(0)}
+                                       </div>
+                                       <div className="flex-1">
+                                         <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
+                                         <div className="text-xs text-slate-500">
+                                           {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                         </div>
+                                       </div>
+                                     </div>
+                                     <button
+                                       onClick={() => handleOverrideAdd(vol)}
+                                       className="text-amber-700 hover:text-amber-800 hover:bg-amber-100 p-1 rounded transition-colors"
+                                       title="Add despite mismatch"
+                                     >
+                                       <UserPlus size={16} />
+                                     </button>
+                                    </div>
+                                    <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                                      {vol.issues.map(issue => (
+                                        <span key={issue} className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded border border-amber-200">
+                                          {issue}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {prefChips(vol)}
+                                    {assignedDatesLine(vol.id)}
+                                   </div>
+                                 ))}
+                               </div>
+                             )}
+                           </div>
+                         )}
+                       </>
                      );
                    })()}
                 </div>
@@ -2891,15 +2966,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <div className="mb-6">
               <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <Calendar size={24} className="text-pink-600" /> {editingEvent ? 'Edit Event' : 'Create New Event'}
+                <Calendar size={24} className="text-pink-600" />
+                {eventModalMode === 'duplicate' ? 'Duplicate Event' : editingEvent ? 'Edit Event' : 'Create New Event'}
               </h2>
               <p className="text-sm text-slate-500 mt-2">
-                Events will be visible to all volunteers once published
+                {eventModalMode === 'duplicate'
+                  ? 'A new draft event will be created — pick a new date'
+                  : 'Events will be visible to all volunteers once published'}
               </p>
             </div>
 
             <EventModalForm
               event={editingEvent}
+              mode={eventModalMode}
               onSave={() => {
                 setShowEventModal(false);
                 setEditingEvent(null);

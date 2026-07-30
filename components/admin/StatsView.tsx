@@ -1,12 +1,14 @@
-// Volunteer utilization table for the admin auto-schedule tab: assignments vs capacity
-// per volunteer, expandable to show each assigned shift.
+// One-screen volunteer overview for the admin auto-schedule tab: per volunteer —
+// preferred location and days, assignments vs effective capacity, utilization,
+// blocked-month flag; rows expand to show each assigned shift (date/time/location).
 // Hoisted out of AdminDashboard so it has a stable component identity across renders —
 // do NOT move it back inside another component's render body (the search input would
 // remount and lose focus on every keystroke).
 import React from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import { Volunteer, Shift } from '../../types';
-import { getEffectiveCapacity } from '../../lib/capacityUtils';
+import { getEffectiveCapacity, isMonthFullyBlocked } from '../../lib/capacityUtils';
+import { ADMIN_DAY_OPTIONS } from '../../constants';
 
 interface StatsViewProps {
   targetYear: number;
@@ -25,12 +27,14 @@ const StatsView: React.FC<StatsViewProps> = ({
   statsSearchTerm, setStatsSearchTerm, expandedVolunteerId, setExpandedVolunteerId
 }) => {
   const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+  const targetMonthName = new Date(targetYear, targetMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
   const monthShifts = shifts.filter(s => s.date.startsWith(targetMonthStr));
 
   const stats = volunteers.map(vol => {
     // Effective capacity: frequency ceiling bounded by the weeks this volunteer
     // is actually eligible for this month (blackouts, only-dates, preferences)
     const capacity = getEffectiveCapacity(vol, monthShifts);
+    const monthBlocked = isMonthFullyBlocked(vol, monthShifts);
 
     const volunteerAssignments = generatedAssignments.filter(a => {
        const shift = shifts.find(s => s.id === a.shiftId);
@@ -47,6 +51,7 @@ const StatsView: React.FC<StatsViewProps> = ({
     return {
       ...vol,
       capacity,
+      monthBlocked,
       assignedCount,
       percentage,
       assignedShifts
@@ -77,7 +82,11 @@ const StatsView: React.FC<StatsViewProps> = ({
             <tr>
               <th className="px-6 py-4 font-semibold text-slate-700">Volunteer</th>
               <th className="px-6 py-4 font-semibold text-slate-700">Role</th>
-              <th className="px-6 py-4 font-semibold text-slate-700">Assignments / Capacity</th>
+              <th className="px-6 py-4 font-semibold text-slate-700">Location</th>
+              <th className="px-6 py-4 font-semibold text-slate-700">Days</th>
+              <th className="px-6 py-4 font-semibold text-slate-700" title="Effective capacity: frequency bounded by the weeks with eligible shifts this month">
+                Assignments / Capacity
+              </th>
               <th className="px-6 py-4 font-semibold text-slate-700">Utilization</th>
             </tr>
           </thead>
@@ -95,9 +104,38 @@ const StatsView: React.FC<StatsViewProps> = ({
                         className={`transition-transform ${expandedVolunteerId === vol.id ? 'rotate-90' : ''}`}
                       />
                       {vol.name}
+                      {vol.monthBlocked && (
+                        <span
+                          className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200"
+                          title={`Their blocked/allowed dates leave no eligible shifts in ${targetMonthName}`}
+                        >
+                          Blocked all of {targetMonthName}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600 text-sm">{vol.role} ({vol.skillLevel})</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-0.5 text-xs font-medium rounded ${
+                      vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
+                      vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
+                      'bg-purple-100 text-purple-700'
+                    }`}>
+                      {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-wrap gap-1 max-w-[180px]">
+                      {vol.preferredDays.length > 0 ? vol.preferredDays.map(dayId => {
+                        const day = ADMIN_DAY_OPTIONS.find(d => d.id === dayId);
+                        return day ? (
+                          <span key={dayId} className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded">
+                            {day.label}
+                          </span>
+                        ) : null;
+                      }) : <span className="text-xs text-slate-400">Any</span>}
+                    </div>
+                  </td>
                   <td className="px-6 py-4 font-medium text-slate-800">
                     <span className={vol.assignedCount > vol.capacity ? 'text-red-600 font-bold' : ''}>
                        {vol.assignedCount}
@@ -123,7 +161,7 @@ const StatsView: React.FC<StatsViewProps> = ({
                 </tr>
                 {expandedVolunteerId === vol.id && (
                   <tr>
-                    <td colSpan={4} className="px-6 py-4 bg-slate-50">
+                    <td colSpan={6} className="px-6 py-4 bg-slate-50">
                       <div className="space-y-2">
                         <h4 className="font-semibold text-slate-700 mb-3">Assigned Shifts for {vol.name}</h4>
                         {vol.assignedShifts && vol.assignedShifts.length > 0 ? (
