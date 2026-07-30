@@ -1,10 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Shift, Volunteer } from "../types";
 import { getShiftDayCode, getWeekNumber, areDatesInSameWeek, canVolunteerWorkShift } from "../lib/availabilityUtils";
+import { getFrequencyCapacity, getEffectiveCapacity } from "../lib/capacityUtils";
 
-// Availability helpers moved to lib/availabilityUtils.ts (single source of truth
-// shared with the dashboards); re-exported here so existing imports keep working.
+// Availability/capacity helpers moved to lib/ (single source of truth shared
+// with the dashboards); re-exported here so existing imports keep working.
+// getMonthlyCapacity is the legacy name for the flat frequency ceiling.
 export { getShiftDayCode, getWeekNumber, areDatesInSameWeek, canVolunteerWorkShift };
+export { getFrequencyCapacity as getMonthlyCapacity };
 
 // Access Vite environment variable correctly
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
@@ -21,76 +24,6 @@ function shuffleArray<T>(array: T[]): T[] {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled;
-}
-
-// Helper to determine monthly capacity based on frequency string
-export const getMonthlyCapacity = (frequency: string): number => {
-  if (!frequency) return 0;
-  const freq = frequency.toUpperCase();
-  if (freq.includes('ONCE_A_WEEK') || freq === 'WEEKLY') return 4; // Approx 4 weeks in a month
-  if (freq.includes('TWICE_A_MONTH')) return 2;
-  if (freq.includes('ONCE_A_MONTH') || freq === 'MONTHLY') return 1;
-  return 0; // Default or inactive
-};
-
-/**
- * Enforce strict capacity limits on assignments
- * Removes excess assignments if any volunteer exceeds their capacity
- */
-function enforceCapacityLimits(
-  assignments: Array<{shiftId: string, volunteerId: string, reasoning?: string}>,
-  volunteers: Volunteer[],
-  shifts: Shift[]
-): Array<{shiftId: string, volunteerId: string, reasoning?: string}> {
-
-  // Create capacity map
-  const capacityMap = new Map<string, number>();
-  volunteers.forEach(v => {
-    capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
-  });
-
-  // Count assignments per volunteer
-  const assignmentCounts = new Map<string, number>();
-  const validAssignments: typeof assignments = [];
-
-  // Sort shifts by date to prioritize earlier shifts
-  const shiftDateMap = new Map<string, string>();
-  shifts.forEach(s => shiftDateMap.set(s.id, s.date));
-
-  const sortedAssignments = [...assignments].sort((a, b) => {
-    const dateA = shiftDateMap.get(a.shiftId) || '';
-    const dateB = shiftDateMap.get(b.shiftId) || '';
-    return dateA.localeCompare(dateB);
-  });
-
-  // Process assignments in order, enforcing capacity
-  for (const assignment of sortedAssignments) {
-    const volunteerId = assignment.volunteerId;
-    const capacity = capacityMap.get(volunteerId) || 0;
-    const currentCount = assignmentCounts.get(volunteerId) || 0;
-
-    if (currentCount < capacity) {
-      validAssignments.push(assignment);
-      assignmentCounts.set(volunteerId, currentCount + 1);
-    } else {
-      console.warn(`Skipping assignment for ${volunteerId}: already at capacity (${capacity})`);
-    }
-  }
-
-  // Log enforcement results
-  console.log('Capacity Enforcement Results:');
-  assignmentCounts.forEach((count, volunteerId) => {
-    const capacity = capacityMap.get(volunteerId) || 0;
-    const volunteer = volunteers.find(v => v.id === volunteerId);
-    console.log(`  ${volunteer?.name}: ${count}/${capacity} assignments`);
-  });
-
-  const removed = assignments.length - validAssignments.length;
-  if (removed > 0) {
-    console.warn(`Removed ${removed} assignments that exceeded capacity limits`);
-  }
-
-  return validAssignments;
 }
 
 /**
@@ -110,6 +43,12 @@ export function scheduleShiftsMultiPass(
   // Track capacity usage
   const capacityUsed = new Map<string, number>();
   volunteers.forEach(v => capacityUsed.set(v.id, 0));
+
+  // Effective capacity per volunteer: frequency ceiling bounded by the weeks
+  // they are actually eligible for in this month (blackouts, only-dates,
+  // weekday/location preferences). 5-week months give once-a-week volunteers 5.
+  const effectiveCapacity = new Map<string, number>();
+  volunteers.forEach(v => effectiveCapacity.set(v.id, getEffectiveCapacity(v, shifts)));
 
   // Track assignments per shift
   const shiftAssignments = new Map<string, string[]>();
@@ -145,7 +84,7 @@ export function scheduleShiftsMultiPass(
       if (a.skillLevel !== b.skillLevel) {
         return a.skillLevel - b.skillLevel; // Ascending: 1, 2, 3
       }
-      return getMonthlyCapacity(b.frequency) - getMonthlyCapacity(a.frequency); // Descending capacity
+      return (effectiveCapacity.get(b.id) || 0) - (effectiveCapacity.get(a.id) || 0); // Descending capacity
     });
 
     console.log('Volunteer priority order (novices first):');
@@ -153,12 +92,12 @@ export function scheduleShiftsMultiPass(
 
   sortedVolunteers.forEach((v, i) => {
     const skillLabel = v.skillLevel === 1 ? 'NOVICE' : v.skillLevel === 2 ? 'INTERMEDIATE' : 'EXPERIENCED';
-    console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${getMonthlyCapacity(v.frequency)})`);
+    console.log(`  ${i + 1}. ${v.name} (${skillLabel}, capacity: ${effectiveCapacity.get(v.id) || 0})`);
   });
 
   // Helper: Check if volunteer can work this shift
   const canWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
-    const capacity = getMonthlyCapacity(volunteer.frequency);
+    const capacity = effectiveCapacity.get(volunteer.id) || 0;
     const used = capacityUsed.get(volunteer.id) || 0;
 
     // Check capacity
@@ -347,7 +286,7 @@ export function scheduleShiftsMultiPass(
 
   capacityUsed.forEach((used, volId) => {
     const volunteer = volunteers.find(v => v.id === volId);
-    const capacity = getMonthlyCapacity(volunteer?.frequency || '');
+    const capacity = effectiveCapacity.get(volId) || 0;
     totalCapacity += capacity;
     totalUsed += used;
 
@@ -536,10 +475,10 @@ export const generateMultipleScheduleOptions = async (
     // Using processedVolunteers which has filtered blackout dates for the target month
     const assignments = scheduleShiftsMultiPass(processedVolunteers, targetShifts, true);
 
-    // Calculate statistics
+    // Calculate statistics (effective capacity: frequency bounded by eligible weeks)
     const capacityMap = new Map<string, number>();
     processedVolunteers.forEach(v => {
-      capacityMap.set(v.id, getMonthlyCapacity(v.frequency));
+      capacityMap.set(v.id, getEffectiveCapacity(v, targetShifts));
     });
 
     const assignmentCounts = new Map<string, number>();

@@ -4,7 +4,8 @@ import {
   Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
-import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
+import { generateScheduleAI, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
+import { getEffectiveCapacity } from '../lib/capacityUtils';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import EventModalForm from './EventModalForm';
@@ -1108,6 +1109,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const visibleShifts = activeTab === 'shifts' ? getUpcomingWeekShifts(displayedShifts) : displayedShifts;
 
+  // Effective capacity for the target month: frequency ceiling bounded by the
+  // weeks the volunteer is actually eligible for (blackouts, only-dates, prefs)
+  const getMonthEffectiveCapacity = (vol: Volunteer): number => {
+    const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    return getEffectiveCapacity(vol, displayedShifts.filter(s => s.date.startsWith(targetMonthStr)));
+  };
+
 
   const getSkillButtonClass = (volSkill: number, btnLevel: number) => {
     if (volSkill !== btnLevel) {
@@ -2054,7 +2062,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                          const s = shifts.find(sh => sh.id === a.shiftId);
                                          return s && s.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
                                        }).length;
-                                       const capacity = getMonthlyCapacity(vol.frequency);
+                                       const capacity = getMonthEffectiveCapacity(vol);
                                        return `${assignedCount}/${capacity}`;
                                      })()}
                                    </div>
@@ -2156,7 +2164,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                        .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails)) // Only show volunteers who can work this shift
                        .filter(v => !volunteersWithShiftsThisWeek.has(v.id)) // Exclude volunteers with shifts in the same week
                        .map(vol => {
-                         const capacity = getMonthlyCapacity(vol.frequency);
+                         const capacity = getMonthEffectiveCapacity(vol);
                          const assignedCount = generatedAssignments.filter(a => {
                            const shift = shifts.find(s => s.id === a.shiftId);
                            return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;

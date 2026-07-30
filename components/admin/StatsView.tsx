@@ -6,7 +6,7 @@
 import React from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import { Volunteer, Shift } from '../../types';
-import { getMonthlyCapacity } from '../../services/geminiService';
+import { getEffectiveCapacity } from '../../lib/capacityUtils';
 
 interface StatsViewProps {
   targetYear: number;
@@ -25,9 +25,12 @@ const StatsView: React.FC<StatsViewProps> = ({
   statsSearchTerm, setStatsSearchTerm, expandedVolunteerId, setExpandedVolunteerId
 }) => {
   const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+  const monthShifts = shifts.filter(s => s.date.startsWith(targetMonthStr));
 
   const stats = volunteers.map(vol => {
-    const capacity = getMonthlyCapacity(vol.frequency);
+    // Effective capacity: frequency ceiling bounded by the weeks this volunteer
+    // is actually eligible for this month (blackouts, only-dates, preferences)
+    const capacity = getEffectiveCapacity(vol, monthShifts);
 
     const volunteerAssignments = generatedAssignments.filter(a => {
        const shift = shifts.find(s => s.id === a.shiftId);
