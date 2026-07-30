@@ -135,6 +135,9 @@ export interface Event {
 
   // Publishing
   isPublished: boolean;
+  // When volunteers were last emailed about this event (stamped by the
+  // send-event-notification edge function; null = never notified)
+  notifiedAt?: string | null;
 
   // Metadata
   createdBy?: string;

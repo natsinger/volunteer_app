@@ -17,6 +17,7 @@ const mapEventFromDB = (dbEvent: any): Event => ({
   recurrenceStartDate: dbEvent.recurrence_start_date,
   recurrenceEndDate: dbEvent.recurrence_end_date,
   isPublished: dbEvent.is_published ?? false,
+  notifiedAt: dbEvent.notified_at ?? null,
   createdBy: dbEvent.created_by,
   createdAt: dbEvent.created_at,
   updatedAt: dbEvent.updated_at,

@@ -18,13 +18,13 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
+import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
 import { getConfirmationsForMonth, AvailabilityConfirmation } from '../services/availabilityConfirmationService';
 import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent, getEventAttendances } from '../services/eventService';
-import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
+import { notifySchedulePublished, notifyEventPublished } from '../services/emailNotificationService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -687,6 +687,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setShowEventModal(true);
   };
 
+  // Email all active volunteers about a published event (explicit, never automatic)
+  const handleNotifyEventVolunteers = async (event: Event) => {
+    const resendWarning = event.notifiedAt
+      ? `\n\nNote: volunteers were already notified on ${new Date(event.notifiedAt).toLocaleDateString('en-GB')} — this sends AGAIN to everyone.`
+      : '';
+    if (!confirm(`Email all active volunteers about "${event.title}"?${resendWarning}`)) return;
+
+    const result = await notifyEventPublished(event.id);
+    if (result.success) {
+      alert(`Event notification sent to ${result.sent} volunteer(s).`);
+      loadEvents(); // refresh notified_at
+    } else {
+      alert(`Failed to send event notifications: ${result.error || 'unknown error'}`);
+    }
+  };
+
   const handleDeleteEvent = async (eventId: string) => {
     if (!confirm('Are you sure you want to delete this event?')) {
       return;
@@ -839,6 +855,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setAssignmentsApplied(true);
       // Capture initial state after applying for change detection
       setInitialAssignments([...generatedAssignments]);
+
+      // Offer to email all active volunteers that the schedule is out.
+      // Behind a confirm so iterative re-applies don't spam everyone.
+      if (confirm(`Send a "schedule published" email to all active volunteers for ${monthName} ${targetYear}?`)) {
+        const notifyResult = await notifySchedulePublished(targetMonth, targetYear);
+        if (notifyResult.success) {
+          alert(`Schedule-published email sent to ${notifyResult.sent} volunteer(s).`);
+        } else {
+          alert(`Failed to send schedule-published emails: ${notifyResult.error || 'unknown error'}`);
+        }
+      }
     } catch (err) {
       console.error('Exception applying assignments:', err);
       alert('An error occurred while applying assignments');
@@ -930,37 +957,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     if (result.success && result.scheduleId) {
-      // Detect shift changes and send notifications to affected volunteers
-      let changeNotificationsSent = 0;
-      try {
-        const changeResult = await sendShiftChangeNotifications(
-          initialAssignments,
-          generatedAssignments,
-          displayedShifts,
-          volunteers
-        );
-
-        if (changeResult.success) {
-          changeNotificationsSent = changeResult.emailsSent;
-          if (changeResult.emailsSent > 0) {
-            console.log(`✓ Sent ${changeResult.emailsSent} shift change notification(s)`);
-          }
-        } else if (changeResult.errors.length > 0) {
-          console.warn('Some shift change notifications failed:', changeResult.errors);
-        }
-      } catch (error) {
-        console.error('Error sending shift change notifications:', error);
-      }
-
       // Update initial assignments to current state for future comparisons
       setInitialAssignments([...generatedAssignments]);
 
       const action = saveMode === 'update' ? 'updated' : 'saved';
-      if (changeNotificationsSent > 0) {
-        alert(`Schedule ${action} successfully!\n\nSent ${changeNotificationsSent} shift change notification${changeNotificationsSent !== 1 ? 's' : ''} to affected volunteers.`);
-      } else {
-        alert(`Schedule ${action} successfully!`);
-      }
+      alert(`Schedule ${action} successfully!`);
 
       setShowSaveScheduleModal(false);
       setScheduleNameInput('');
@@ -1900,6 +1901,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2 ml-4">
+                        {event.isPublished && (
+                          <button
+                            onClick={() => handleNotifyEventVolunteers(event)}
+                            className="px-3 py-1.5 rounded-lg font-medium text-sm transition-colors bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1.5"
+                            title={event.notifiedAt
+                              ? `Volunteers were notified on ${new Date(event.notifiedAt).toLocaleDateString('en-GB')} — sends again`
+                              : 'Email all active volunteers about this event'}
+                          >
+                            <Mail size={14} />
+                            {event.notifiedAt ? 'Notify Again' : 'Notify Volunteers'}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleToggleEventPublish(event)}
                           className={`px-3 py-1.5 rounded-lg font-medium text-sm transition-colors ${
