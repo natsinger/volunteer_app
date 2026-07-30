@@ -50,3 +50,23 @@ export const formatMonthYear = (month: number, year: number): string => {
   const date = new Date(year, month - 1, 1);
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 };
+
+/**
+ * Today's date in YYYY-MM-DD (local time).
+ * Minimum selectable date for admins editing availability: current-month
+ * changes are legitimate (the schedule gets adjusted mid-month).
+ */
+export const getTodayStr = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * First day of next month in YYYY-MM-DD (local time).
+ * Minimum selectable date for volunteers: they plan the upcoming month.
+ */
+export const getFirstOfNextMonthStr = (): string => {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-01`;
+};

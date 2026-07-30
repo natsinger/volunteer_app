@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
-import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
+import { formatDateDDMMYYYY, formatMonthYear, getFirstOfNextMonthStr } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
 import { getSchedulingTargetMonth, getMyConfirmation, confirmAvailability } from '../services/availabilityConfirmationService';
 import { SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END } from '../constants';
@@ -161,16 +161,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     setEditForm(currentUser);
   }, [currentUser]);
 
-  // Get minimum selectable date for date picker
-  // Temporarily allow editing the current month (April 2026) since the schedule needs updates
-  const getDefaultMinDate = () => {
-    const today = new Date();
-    if (today.getFullYear() === 2026 && today.getMonth() === 3) { // April 2026
-      return today.toISOString().split('T')[0];
-    }
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    return nextMonth.toISOString().split('T')[0];
-  };
+  // Minimum selectable date for date pickers: volunteers plan the upcoming month
+  const getDefaultMinDate = () => getFirstOfNextMonthStr();
 
   // Switch request state
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);

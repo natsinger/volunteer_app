@@ -6,6 +6,7 @@ import {
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
 import { generateScheduleAI, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
 import { getEffectiveCapacity, isMonthFullyBlocked } from '../lib/capacityUtils';
+import { getTodayStr } from '../lib/dateUtils';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import EventModalForm from './EventModalForm';
@@ -61,6 +62,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
   const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
   const [adminNewBlackoutEndDate, setAdminNewBlackoutEndDate] = useState('');
+  const [adminNewOnlyDate, setAdminNewOnlyDate] = useState('');
+  const [adminNewOnlyEndDate, setAdminNewOnlyEndDate] = useState('');
 
   // Recurring Shift Management State
   const [recurringShifts, setRecurringShifts] = useState<RecurringShift[]>([]);
@@ -558,24 +561,64 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  // Temporarily allow editing the current month (April 2026) since the schedule needs updates
-  const getDefaultMinDate = () => {
-    const today = new Date();
-    if (today.getFullYear() === 2026 && today.getMonth() === 3) { // April 2026
-      return today.toISOString().split('T')[0];
+  const addAdminOnlyDate = () => {
+    if (!adminNewOnlyDate || !editingVolunteer) return;
+
+    const datesToAdd: string[] = [];
+
+    // If end date is specified, add all dates in range
+    if (adminNewOnlyEndDate && adminNewOnlyEndDate >= adminNewOnlyDate) {
+      const startDate = new Date(adminNewOnlyDate);
+      const endDate = new Date(adminNewOnlyEndDate);
+
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!editingVolunteer.onlyDates.includes(dateStr)) {
+          datesToAdd.push(dateStr);
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    } else {
+      // Single date
+      if (!editingVolunteer.onlyDates.includes(adminNewOnlyDate)) {
+        datesToAdd.push(adminNewOnlyDate);
+      }
     }
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    return nextMonth.toISOString().split('T')[0];
+
+    if (datesToAdd.length > 0) {
+      setEditingVolunteer({
+        ...editingVolunteer,
+        onlyDates: [...editingVolunteer.onlyDates, ...datesToAdd].sort()
+      });
+    }
+
+    setAdminNewOnlyDate('');
+    setAdminNewOnlyEndDate('');
   };
+
+  const removeAdminOnlyDate = (date: string) => {
+    if (!editingVolunteer) return;
+    setEditingVolunteer({
+      ...editingVolunteer,
+      onlyDates: editingVolunteer.onlyDates.filter(d => d !== date)
+    });
+  };
+
+  // Minimum selectable date for date pickers: admins may edit the current month
+  // (the live schedule gets adjusted mid-month)
+  const getDefaultMinDate = () => getTodayStr();
 
   const handleSaveVolunteerEdit = async () => {
     if (!editingVolunteer) return;
 
-    // Strip past-month dates before saving
-    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+    // Strip past dates before saving — same rule the modal uses for display,
+    // so exactly what the admin sees is what gets saved
+    const todayStr = getTodayStr();
     const cleanedVolunteer = {
       ...editingVolunteer,
-      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart),
+      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= todayStr),
+      onlyDates: editingVolunteer.onlyDates.filter(d => d >= todayStr),
     };
 
     try {
@@ -2449,7 +2492,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                 <div className="flex flex-wrap gap-2">
                   {editingVolunteer.blackoutDates
-                    .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                    .filter(d => d >= getTodayStr())
                     .map(date => (
                     <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
                       {date}
@@ -2458,8 +2501,74 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </button>
                     </span>
                   ))}
-                  {editingVolunteer.blackoutDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
+                  {editingVolunteer.blackoutDates.filter(d => d >= getTodayStr()).length === 0 && (
                     <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                  )}
+                  {editingVolunteer.blackoutDates.filter(d => d < getTodayStr()).length > 0 && (
+                    <span className="text-slate-400 text-xs italic self-center"
+                          title="Past dates are removed automatically on save">
+                      +{editingVolunteer.blackoutDates.filter(d => d < getTodayStr()).length} past
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Only Dates - the specific dates the volunteer said they CAN come */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Only Dates (Can ONLY come on these)</label>
+                <p className="text-xs text-slate-500 mb-2">
+                  If any dates are set, this volunteer is scheduled <strong>only</strong> on them —
+                  even when the weekday is not in their preferred days.
+                </p>
+                <div className="space-y-2 mb-3">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewOnlyDate}
+                      onChange={(e) => setAdminNewOnlyDate(e.target.value)}
+                      min={getDefaultMinDate()}
+                      placeholder="Start date"
+                    />
+                    <span className="text-slate-400 text-sm">to</span>
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewOnlyEndDate}
+                      onChange={(e) => setAdminNewOnlyEndDate(e.target.value)}
+                      min={adminNewOnlyDate || getDefaultMinDate()}
+                      placeholder="End date (optional)"
+                    />
+                    <button
+                      onClick={addAdminOnlyDate}
+                      disabled={!adminNewOnlyDate}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Plus size={18} />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {editingVolunteer.onlyDates
+                    .filter(d => d >= getTodayStr())
+                    .map(date => (
+                    <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md text-sm">
+                      {date}
+                      <button onClick={() => removeAdminOnlyDate(date)} className="hover:bg-emerald-100 rounded p-0.5">
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  {editingVolunteer.onlyDates.filter(d => d >= getTodayStr()).length === 0 && (
+                    <span className="text-slate-400 text-sm italic">No restriction — all preferred days count</span>
+                  )}
+                  {editingVolunteer.onlyDates.filter(d => d < getTodayStr()).length > 0 && (
+                    <span className="text-slate-400 text-xs italic self-center"
+                          title="Past dates are removed automatically on save">
+                      +{editingVolunteer.onlyDates.filter(d => d < getTodayStr()).length} past
+                    </span>
                   )}
                 </div>
               </div>
@@ -2490,6 +2599,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   setEditingVolunteer(null);
                   setAdminNewBlackoutDate('');
                   setAdminNewBlackoutEndDate('');
+                  setAdminNewOnlyDate('');
+                  setAdminNewOnlyEndDate('');
                 }}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium"
               >
