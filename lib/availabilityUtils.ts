@@ -59,6 +59,16 @@ export function getShiftDayCode(shiftOrDate: Shift | string, timeStr?: string): 
 }
 
 /**
+ * Whether a Friday shift is the opening or the closing one.
+ * Prefers the explicit shiftSlot tag; falls back to the same start-time
+ * heuristic getShiftDayCode uses (before 14:00 = opening).
+ */
+export const isOpeningShift = (shift: Shift): boolean =>
+  shift.shiftSlot
+    ? shift.shiftSlot === 'opening'
+    : parseInt(shift.startTime.split(':')[0], 10) < 14;
+
+/**
  * Get the week number for a given date (year + week-of-year, Sunday-based)
  * Used to check if two shifts are in the same week
  */

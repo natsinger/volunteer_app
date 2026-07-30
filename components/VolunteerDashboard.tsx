@@ -10,6 +10,7 @@ import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
 import { formatDateDDMMYYYY, formatMonthYear, getFirstOfNextMonthStr } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
+import { isOpeningShift } from '../lib/availabilityUtils';
 import { getSchedulingTargetMonth, getMyConfirmation, confirmAvailability } from '../services/availabilityConfirmationService';
 import { SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END } from '../constants';
 
@@ -180,6 +181,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [selectedVolunteerProfile, setSelectedVolunteerProfile] = useState<Volunteer | null>(null);
   // Store coworkers for each shift (shift ID -> volunteer list)
   const [shiftCoworkers, setShiftCoworkers] = useState<Record<string, Volunteer[]>>({});
+  // Friday coworkers modal: everyone on that date grouped by opening/closing
+  const [fridayTeam, setFridayTeam] = useState<{ openers: Volunteer[]; closers: Volunteer[] } | null>(null);
 
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<'my-shifts' | 'monthly-schedule'>('my-shifts');
@@ -444,16 +447,27 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const loadCoworkers = async (shift: Shift) => {
     setIsLoadingCoworkers(true);
     setCoworkersShift(shift);
+    setFridayTeam(null);
     setShowCoworkersModal(true);
     try {
-      // Get all assignments for this shift
-      const assignments = await getShiftAssignments([shift.id]);
+      const isFriday = new Date(shift.date).getDay() === 5;
 
-      // Extract volunteer IDs
-      const volunteerIds = assignments.map(a => a.volunteerId);
+      // On Fridays the modal shows the whole day grouped into opening/closing
+      // teams, so volunteers can see who opens and who closes — not just their
+      // own shift's team.
+      const sameDayShifts = isFriday
+        ? [...shifts, ...scheduleShifts]
+            .filter(s => s.date === shift.date)
+            .filter((s, i, arr) => arr.findIndex(x => x.id === s.id) === i)
+        : [shift];
+      const shiftIds = sameDayShifts.length > 0 ? sameDayShifts.map(s => s.id) : [shift.id];
+
+      const assignments = await getShiftAssignments(shiftIds);
+      const volunteerIds = [...new Set(assignments.map(a => a.volunteerId))];
 
       if (volunteerIds.length === 0) {
         setCoworkers([]);
+        if (isFriday) setFridayTeam({ openers: [], closers: [] });
         return;
       }
 
@@ -469,8 +483,36 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         return;
       }
 
-      const volunteers = (data || []).map(mapVolunteerFromDB);
-      setCoworkers(volunteers);
+      const volunteerById = new Map<string, Volunteer>(
+        (data || []).map(row => {
+          const v = mapVolunteerFromDB(row);
+          return [v.id, v];
+        })
+      );
+
+      // The clicked shift's own team (used by the non-Friday list)
+      const clickedShiftVolunteerIds = new Set(
+        assignments.filter(a => a.shiftId === shift.id).map(a => a.volunteerId)
+      );
+      setCoworkers(
+        [...clickedShiftVolunteerIds]
+          .map(id => volunteerById.get(id))
+          .filter((v): v is Volunteer => Boolean(v))
+      );
+
+      if (isFriday) {
+        const shiftById = new Map(sameDayShifts.map(s => [s.id, s]));
+        const openers = new Map<string, Volunteer>();
+        const closers = new Map<string, Volunteer>();
+        assignments.forEach(a => {
+          const s = shiftById.get(a.shiftId);
+          const v = volunteerById.get(a.volunteerId);
+          if (!s || !v) return;
+          // A volunteer doing both opening and closing appears in both groups
+          (isOpeningShift(s) ? openers : closers).set(v.id, v);
+        });
+        setFridayTeam({ openers: [...openers.values()], closers: [...closers.values()] });
+      }
     } catch (error) {
       console.error('Error loading coworkers:', error);
       setCoworkers([]);
@@ -1620,19 +1662,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                         <span className="font-semibold truncate text-[10px] sm:text-xs text-slate-800">
                                           {shift.startTime.slice(0,5)}
                                         </span>
-                                        {new Date(dateStr).getDay() === 5 && (() => {
-                                          // Prefer the explicit slot tag; fall back to start-time heuristic.
-                                          const isOpening = shift.shiftSlot
-                                            ? shift.shiftSlot === 'opening'
-                                            : parseInt(shift.startTime.split(':')[0], 10) < 14;
-                                          return (
-                                            <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
-                                              isOpening ? 'bg-amber-200 text-amber-800' : 'bg-violet-200 text-violet-800'
-                                            }`}>
-                                              {isOpening ? 'Opening' : 'Closing'}
-                                            </span>
-                                          );
-                                        })()}
+                                        {new Date(dateStr).getDay() === 5 && (
+                                          <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
+                                            isOpeningShift(shift) ? 'bg-amber-200 text-amber-800' : 'bg-violet-200 text-violet-800'
+                                          }`}>
+                                            {isOpeningShift(shift) ? 'Opening' : 'Closing'}
+                                          </span>
+                                        )}
                                         {isMyShift && (
                                           <span className="w-2 h-2 rounded-full bg-indigo-600 flex-shrink-0" title="Your Shift"></span>
                                         )}
@@ -2239,6 +2275,49 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <div className="py-8 text-center text-slate-500">
                 <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
                 <p className="text-sm">Loading team members...</p>
+              </div>
+            ) : fridayTeam ? (
+              /* Friday: everyone on this date, grouped so it's clear who opens and who closes */
+              <div className="space-y-4">
+                {[
+                  { label: 'Opening', volunteers: fridayTeam.openers, chipClass: 'bg-amber-200 text-amber-800', avatarClass: 'bg-amber-100 text-amber-700' },
+                  { label: 'Closing', volunteers: fridayTeam.closers, chipClass: 'bg-violet-200 text-violet-800', avatarClass: 'bg-violet-100 text-violet-700' },
+                ].map(group => (
+                  <div key={group.label}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${group.chipClass}`}>{group.label}</span>
+                      <span className="text-xs text-slate-500">
+                        {group.volunteers.length} volunteer{group.volunteers.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    {group.volunteers.length === 0 ? (
+                      <p className="text-sm text-slate-400 italic px-1">No one assigned yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {group.volunteers.map(volunteer => (
+                          <div
+                            key={volunteer.id}
+                            className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${group.avatarClass}`}>
+                                {volunteer.name.charAt(0)}
+                              </div>
+                              <p className="font-medium text-slate-900">{volunteer.name}</p>
+                            </div>
+                            <button
+                              onClick={() => setSelectedVolunteerProfile(volunteer)}
+                              className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition-colors"
+                              title="View profile"
+                            >
+                              <User size={18} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : coworkers.length === 0 ? (
               <div className="py-8 text-center text-slate-500">

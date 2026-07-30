@@ -2902,6 +2902,48 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
+            {/* RSVP'd volunteers, grouped by date (recurring events span several dates) */}
+            {(() => {
+              const eventRsvps = eventAttendances.filter(a => a.eventId === selectedEventForDetails.id);
+              if (eventRsvps.length === 0) {
+                return (
+                  <div className="mt-5 pt-4 border-t border-slate-100 text-sm text-slate-400 italic">
+                    No volunteers have confirmed attendance yet.
+                  </div>
+                );
+              }
+              const byDate = new Map<string, string[]>();
+              eventRsvps.forEach(a => {
+                const name = volunteers.find(v => v.id === a.volunteerId)?.name ?? 'Unknown volunteer';
+                byDate.set(a.eventDate, [...(byDate.get(a.eventDate) ?? []), name]);
+              });
+              const dates = [...byDate.keys()].sort();
+              return (
+                <div className="mt-5 pt-4 border-t border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <UserCheck size={16} className="text-green-600" />
+                    Attending ({eventRsvps.length})
+                  </h3>
+                  <div className="space-y-3 max-h-56 overflow-y-auto">
+                    {dates.map(date => (
+                      <div key={date}>
+                        <div className="text-xs font-semibold text-slate-500 mb-1.5">
+                          {date} · {byDate.get(date)!.length} volunteer{byDate.get(date)!.length !== 1 ? 's' : ''}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {byDate.get(date)!.sort().map(name => (
+                            <span key={name} className="px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-xs font-medium">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="mt-6 flex justify-end">
               <button
                 onClick={() => setSelectedEventForDetails(null)}
