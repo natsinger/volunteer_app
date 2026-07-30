@@ -10,6 +10,7 @@ import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
 import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
+import { getSchedulingTargetMonth, getMyConfirmation, confirmAvailability } from '../services/availabilityConfirmationService';
 import { SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END } from '../constants';
 
 interface VolunteerDashboardProps {
@@ -48,6 +49,42 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   } | null>(null);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+
+  // Availability confirmation for the scheduling target month (= next month).
+  // null while loading; then whether a confirmation row exists.
+  const [availabilityConfirmed, setAvailabilityConfirmed] = useState<boolean | null>(null);
+  const [showAvailabilityPrompt, setShowAvailabilityPrompt] = useState(false);
+  const [isConfirmingAvailability, setIsConfirmingAvailability] = useState(false);
+  const confirmationTarget = getSchedulingTargetMonth();
+  const availabilityPromptDismissKey = `availability-prompt-dismissed-${confirmationTarget.year}-${confirmationTarget.month}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyConfirmation(currentUser.id, confirmationTarget.month, confirmationTarget.year).then(conf => {
+      if (!cancelled) setAvailabilityConfirmed(conf !== null);
+    });
+    return () => { cancelled = true; };
+  }, [currentUser.id, confirmationTarget.month, confirmationTarget.year]);
+
+  const handleConfirmAvailabilityUnchanged = async () => {
+    setIsConfirmingAvailability(true);
+    const result = await confirmAvailability(
+      currentUser.id, confirmationTarget.month, confirmationTarget.year, 'confirmed'
+    );
+    setIsConfirmingAvailability(false);
+    if (result.success) {
+      setAvailabilityConfirmed(true);
+      setShowAvailabilityPrompt(false);
+      setToast({ message: 'הזמינות אושרה — תודה!', type: 'success' });
+    } else {
+      setToast({
+        message: 'אישור הזמינות נכשל — נסו שוב',
+        detail: result.error,
+        type: 'error',
+        action: { label: 'נסה שוב', onClick: () => handleConfirmAvailabilityUnchanged() },
+      });
+    }
+  };
 
   // localStorage key for the edit-form draft (survives tab close, unlike sessionStorage)
   const DRAFT_STORAGE_KEY = `volunteer-draft-${currentUser.id}`;
@@ -667,11 +704,29 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const now = new Date();
   const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const cutoffDate = new Date(now.getFullYear(), now.getMonth(), lastDayOfMonth.getDate() - SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END);
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const updatedThisMonth = currentUser.updatedAt ? new Date(currentUser.updatedAt) >= startOfMonth : false;
   const availabilityPeriodLabel = new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-US', { month: 'long' });
+  const availabilityPeriodLabelHebrew = new Date(confirmationTarget.year, confirmationTarget.month - 1, 1).toLocaleDateString('he-IL', { month: 'long' });
   const availabilityDeadlineLabel = cutoffDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-  const needsAvailabilityUpdate = now <= cutoffDate && !updatedThisMonth;
+  // Due until an explicit confirmation exists for the target month (a real save
+  // also records one) — profile-photo edits no longer silence the reminder.
+  const needsAvailabilityUpdate = now <= cutoffDate && availabilityConfirmed === false;
+
+  // First-open prompt: once per session, ask the volunteer to confirm their
+  // availability for the target month without having to fake a save.
+  useEffect(() => {
+    if (!needsAvailabilityUpdate || isEditing) return;
+    try {
+      if (sessionStorage.getItem(availabilityPromptDismissKey)) return;
+    } catch { /* storage unavailable — just show the prompt */ }
+    setShowAvailabilityPrompt(true);
+  }, [needsAvailabilityUpdate, isEditing, availabilityPromptDismissKey]);
+
+  const dismissAvailabilityPrompt = () => {
+    setShowAvailabilityPrompt(false);
+    try {
+      sessionStorage.setItem(availabilityPromptDismissKey, '1');
+    } catch { /* ignore */ }
+  };
 
   // Show open shifts that the volunteer could potentially work
   const openShifts = shifts
@@ -803,6 +858,11 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       setShowDiscardConfirm(false);
       setIsEditing(false);
       setToast({ message: 'Changes saved successfully', type: 'success' });
+      // A real save also counts as confirming availability for the target month.
+      // Fire-and-forget: a failure here must never fail the save itself.
+      confirmAvailability(currentUser.id, confirmationTarget.month, confirmationTarget.year, 'updated')
+        .then(r => { if (r.success) setAvailabilityConfirmed(true); })
+        .catch(e => console.error('[VolunteerDashboard] Failed to record confirmation:', e));
     } catch (error) {
       console.error('[VolunteerDashboard] Error saving volunteer data:', error);
       setShowDiscardConfirm(false);
@@ -957,6 +1017,49 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         </div>
       )}
 
+      {/* Availability confirmation prompt — first open of the month */}
+      {showAvailabilityPrompt && !isEditing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div dir="rtl" className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative animate-fade-in text-right">
+            <button
+              onClick={dismissAvailabilityPrompt}
+              className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <CalendarCheck size={22} className="text-indigo-600 shrink-0" />
+              <h2 className="text-lg font-bold text-slate-900">
+                האם הזמינות שלך לחודש {availabilityPeriodLabelHebrew} עדכנית?
+              </h2>
+            </div>
+            <p className="text-sm text-slate-600 mb-5">
+              אם לא השתנה כלום, אפשר לאשר בלחיצה אחת — בלי להיכנס ולערוך.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleConfirmAvailabilityUnchanged}
+                disabled={isConfirmingAvailability}
+                className="px-4 py-2.5 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isConfirmingAvailability ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Check size={16} />
+                )}
+                אשר זמינות
+              </button>
+              <button
+                onClick={() => { dismissAvailabilityPrompt(); setEditForm(currentUser); setIsEditing(true); }}
+                className="px-4 py-2.5 text-indigo-700 border border-indigo-200 hover:bg-indigo-50 rounded-lg font-semibold transition-colors"
+              >
+                עדכן פרטים
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-5xl mx-auto p-3 sm:p-6 md:p-12 pb-24">
 
         {/* Profile Header */}
@@ -1011,12 +1114,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors"
-            >
-              Update Availability
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors"
+              >
+                Update Availability
+              </button>
+              <button
+                onClick={handleConfirmAvailabilityUnchanged}
+                disabled={isConfirmingAvailability}
+                className="bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors disabled:opacity-50"
+              >
+                אשר זמינות ללא שינויים
+              </button>
+            </div>
           </div>
         )}
 

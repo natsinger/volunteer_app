@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
 import { generateScheduleAI, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
-import { getEffectiveCapacity } from '../lib/capacityUtils';
+import { getEffectiveCapacity, isMonthFullyBlocked } from '../lib/capacityUtils';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import EventModalForm from './EventModalForm';
@@ -19,6 +19,7 @@ import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignmen
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
+import { getConfirmationsForMonth, AvailabilityConfirmation } from '../services/availabilityConfirmationService';
 import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent, getEventAttendances } from '../services/eventService';
 import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
 
@@ -1086,16 +1087,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     )
     .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically by name
 
-  // Helper function to check if volunteer updated preferences in last 7 days
-  const wasRecentlyUpdated = (updatedAt?: string): boolean => {
-    if (!updatedAt) return false;
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    return new Date(updatedAt) > sevenDaysAgo;
-  };
+  // Availability confirmations for the target month: who explicitly updated or
+  // confirmed their availability for the month being scheduled (replaces the
+  // old "updated_at within 7 days" heuristic, which any profile touch tripped)
+  const [monthConfirmations, setMonthConfirmations] = useState<Map<string, AvailabilityConfirmation>>(new Map());
 
-  // Count recently updated volunteers
-  const recentlyUpdatedCount = volunteers.filter(vol => wasRecentlyUpdated(vol.updatedAt)).length;
+  useEffect(() => {
+    let cancelled = false;
+    getConfirmationsForMonth(targetMonth, targetYear).then(confirmations => {
+      if (cancelled) return;
+      setMonthConfirmations(new Map(confirmations.map(c => [c.volunteerId, c])));
+    });
+    return () => { cancelled = true; };
+  }, [targetMonth, targetYear, volunteers]);
+
+  const targetMonthName = new Date(targetYear, targetMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
+  const updatedForTargetMonthCount = volunteers.filter(vol => monthConfirmations.has(vol.id)).length;
 
   const getUpcomingWeekShifts = (allShifts: Shift[]) => {
     const today = new Date();
@@ -1114,6 +1121,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const getMonthEffectiveCapacity = (vol: Volunteer): number => {
     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
     return getEffectiveCapacity(vol, displayedShifts.filter(s => s.date.startsWith(targetMonthStr)));
+  };
+
+  // True when the volunteer's own blocked/allowed dates leave zero eligible
+  // shifts in the target month (an otherwise-workable month)
+  const isVolunteerMonthBlocked = (vol: Volunteer): boolean => {
+    const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    return isMonthFullyBlocked(vol, displayedShifts.filter(s => s.date.startsWith(targetMonthStr)));
   };
 
 
@@ -1184,15 +1198,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Volunteers Tab */}
         {activeTab === 'volunteers' && (
           <div className="max-w-7xl mx-auto animate-fade-in">
-            {/* Recently Updated Summary */}
-            {recentlyUpdatedCount > 0 && (
+            {/* Availability-Updated Summary for the target month */}
+            {updatedForTargetMonthCount > 0 && (
               <div className="mb-6 bg-gradient-to-r from-emerald-50 to-emerald-100 border border-emerald-200 rounded-xl p-4 flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center">
                   <CheckCircle size={24} className="text-white" />
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-emerald-900">
-                    {recentlyUpdatedCount} {recentlyUpdatedCount === 1 ? 'volunteer has' : 'volunteers have'} updated preferences in the last 7 days
+                    {updatedForTargetMonthCount} of {volunteers.length} volunteers confirmed availability for {targetMonthName}
                   </h3>
                   <p className="text-sm text-emerald-700">Volunteers are active! This is a great time to run the auto-scheduler.</p>
                 </div>
@@ -1252,11 +1266,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="text-base font-semibold text-slate-900">{vol.name}</div>
-                          {wasRecentlyUpdated(vol.updatedAt) && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200" title="Updated preferences in the last 7 days">
-                              <CheckCircle size={12} className="mr-1" /> Updated
-                            </span>
-                          )}
+                          {(() => {
+                            const conf = monthConfirmations.get(vol.id);
+                            if (!conf) return null;
+                            const when = new Date(conf.confirmedAt).toLocaleDateString('en-GB');
+                            const how = conf.source === 'updated' ? 'updated availability' : 'confirmed (no changes)';
+                            return (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                title={`${how} for ${targetMonthName} on ${when}`}
+                              >
+                                <CheckCircle size={12} className="mr-1" /> Updated for {targetMonthName}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="text-sm text-slate-500">{vol.email}</div>
                         <div className="text-xs text-slate-400">{vol.phone}</div>
@@ -1297,6 +1320,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       </td>
                        <td className="px-6 py-4">
+                        {isVolunteerMonthBlocked(vol) && (
+                          <div className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200 mb-1"
+                               title={`Their blocked/allowed dates leave no eligible shifts in ${targetMonthName}`}>
+                            Blocked all of {targetMonthName}
+                          </div>
+                        )}
                         {vol.blackoutDates && vol.blackoutDates.length > 0 && (
                           <div className="text-xs text-red-500 mb-1" title={vol.blackoutDates.join(', ')}>
                             {vol.blackoutDates.length} blackout dates
