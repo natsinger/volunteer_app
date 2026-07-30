@@ -297,6 +297,79 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
 
+  // --- Draft persistence: unapplied schedule work survives refresh/re-login ---
+  // The reported bug: a page refresh sent the admin back to login and every
+  // in-progress (not yet applied) schedule edit was lost. Applied schedules
+  // already reload from the DB (loadExistingAssignments); this covers drafts.
+  const DRAFT_VERSION = 1;
+  const ADMIN_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const adminDraftKey = `admin-schedule-draft-${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null);
+  // When a draft was restored for the current month, don't let the DB
+  // assignment load overwrite it
+  const draftRestoredRef = React.useRef(false);
+
+  const discardAdminDraft = () => {
+    try {
+      localStorage.removeItem(adminDraftKey);
+    } catch (e) {
+      console.error('[AdminDashboard] Failed to remove schedule draft:', e);
+    }
+    draftRestoredRef.current = false;
+    setRestoredDraftAt(null);
+  };
+
+  // Restore a saved draft when switching to (or mounting on) a month with no work in memory
+  useEffect(() => {
+    draftRestoredRef.current = false;
+    setRestoredDraftAt(null);
+    if (generatedAssignments.length > 0 || scheduleResultView !== 'none') return;
+    try {
+      const raw = localStorage.getItem(adminDraftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      const expired = !draft.savedAt || Date.now() - draft.savedAt > ADMIN_DRAFT_MAX_AGE_MS;
+      if (draft.version !== DRAFT_VERSION || expired) {
+        localStorage.removeItem(adminDraftKey);
+        return;
+      }
+      setGeneratedAssignments(draft.generatedAssignments ?? []);
+      setInitialAssignments(draft.initialAssignments ?? []);
+      setScheduleOptions(draft.scheduleOptions ?? []);
+      setSelectedOptionId(draft.selectedOptionId ?? null);
+      setScheduleResultView(draft.scheduleResultView ?? 'calendar');
+      setAssignmentsApplied(false); // drafts are unapplied by construction
+      draftRestoredRef.current = true;
+      setRestoredDraftAt(new Date(draft.savedAt).toLocaleString('en-GB'));
+      console.log('[AdminDashboard] Restored unapplied schedule draft for', adminDraftKey);
+    } catch (e) {
+      console.error('[AdminDashboard] Failed to restore schedule draft:', e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetMonth, targetYear]);
+
+  // Persist the draft (debounced) while there is unapplied work in memory
+  useEffect(() => {
+    if (assignmentsApplied) return; // applied schedules live in the DB
+    if (generatedAssignments.length === 0 && scheduleResultView === 'none') return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(adminDraftKey, JSON.stringify({
+          version: DRAFT_VERSION,
+          savedAt: Date.now(),
+          generatedAssignments,
+          initialAssignments,
+          scheduleOptions,
+          selectedOptionId,
+          scheduleResultView,
+        }));
+      } catch (e) {
+        console.error('[AdminDashboard] Failed to persist schedule draft:', e);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [adminDraftKey, assignmentsApplied, generatedAssignments, initialAssignments, scheduleOptions, selectedOptionId, scheduleResultView]);
+
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
 
@@ -746,6 +819,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Load existing assignments from the database
   const loadExistingAssignments = async () => {
     if (displayedShifts.length === 0) return;
+    // A restored unapplied draft is newer than whatever is in the DB — keep it
+    if (draftRestoredRef.current) return;
 
     const shiftIds = displayedShifts.map(s => s.id);
     const dbAssignments = await getShiftAssignments(shiftIds);
@@ -855,6 +930,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setAssignmentsApplied(true);
       // Capture initial state after applying for change detection
       setInitialAssignments([...generatedAssignments]);
+      // The work is in the DB now — the local draft is no longer needed
+      discardAdminDraft();
 
       // Offer to email all active volunteers that the schedule is out.
       // Behind a confirm so iterative re-applies don't spam everyone.
@@ -905,6 +982,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setGeneratedAssignments([]);
       setAssignmentsApplied(false);
       setScheduleResultView('none');
+      discardAdminDraft();
 
       const deletedCount = clearResult.deletedCount || 0;
       alert(`Cleared ${deletedCount} volunteer assignment(s) for ${monthName} ${targetYear}.\n\nVolunteers will no longer see these shifts.\nSaved schedules in history are preserved.`);
@@ -1612,7 +1690,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Auto-Schedule Tab */}
         {activeTab === 'auto' && (
           <div className="max-w-7xl mx-auto animate-fade-in text-center pt-2">
-            
+
+            {/* Restored-draft notice */}
+            {restoredDraftAt && (
+              <div className="mb-4 bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2 text-sm text-blue-800">
+                  <History size={16} className="shrink-0" />
+                  Restored an unsaved schedule draft from {restoredDraftAt}. It has not been applied to the database.
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm('Discard the restored draft? This clears the current unapplied schedule.')) {
+                      discardAdminDraft();
+                      setGeneratedAssignments([]);
+                      setInitialAssignments([]);
+                      setScheduleOptions([]);
+                      setSelectedOptionId(null);
+                      setScheduleResultView('none');
+                    }
+                  }}
+                  className="text-xs font-semibold text-blue-700 hover:text-red-600 whitespace-nowrap px-2 py-1 rounded hover:bg-blue-100 transition-colors"
+                >
+                  Discard draft
+                </button>
+              </div>
+            )}
+
             {scheduleResultView === 'none' ? (
               <div className="pt-6">
                 <div className="inline-block p-4 bg-emerald-100 rounded-full text-emerald-600 mb-6">
