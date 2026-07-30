@@ -1,5 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Shift, Volunteer } from "../types";
+import { getShiftDayCode, getWeekNumber, areDatesInSameWeek, canVolunteerWorkShift } from "../lib/availabilityUtils";
+
+// Availability helpers moved to lib/availabilityUtils.ts (single source of truth
+// shared with the dashboards); re-exported here so existing imports keep working.
+export { getShiftDayCode, getWeekNumber, areDatesInSameWeek, canVolunteerWorkShift };
 
 // Access Vite environment variable correctly
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
@@ -26,112 +31,6 @@ export const getMonthlyCapacity = (frequency: string): number => {
   if (freq.includes('TWICE_A_MONTH')) return 2;
   if (freq.includes('ONCE_A_MONTH') || freq === 'MONTHLY') return 1;
   return 0; // Default or inactive
-};
-
-/**
- * Get the day code used to match a shift against a volunteer's preferredDays.
- *
- * Codes:
- *   - '0'..'6'                          → Sun..Sat (single-slot days)
- *   - '2_morning' / '2_evening'         → Tuesday split
- *   - '5_opening' / '5_closing'         → Friday split
- *
- * For split days (2 and 5), this prefers the shift's explicit `shiftSlot`
- * tag when set, and only falls back to the legacy time-of-day heuristic
- * (Tuesday < 16:00 = morning; Friday < 14:00 = opening) when no tag exists.
- *
- * Two call shapes are supported:
- *   getShiftDayCode(shift)               // preferred — uses shiftSlot
- *   getShiftDayCode(dateStr, timeStr)    // legacy — time-based only
- */
-export function getShiftDayCode(shift: Shift): string;
-export function getShiftDayCode(dateStr: string, timeStr: string): string;
-export function getShiftDayCode(shiftOrDate: Shift | string, timeStr?: string): string {
-  // Normalize arguments
-  const dateStr = typeof shiftOrDate === 'string' ? shiftOrDate : shiftOrDate.date;
-  const startTime = typeof shiftOrDate === 'string' ? (timeStr ?? '') : shiftOrDate.startTime;
-  const explicitSlot = typeof shiftOrDate === 'string' ? null : (shiftOrDate.shiftSlot ?? null);
-
-  const date = new Date(dateStr);
-  const day = date.getDay(); // 0 = Sunday
-  const hour = parseInt(startTime.split(':')[0], 10);
-
-  // Tuesday (Day 2) splits: morning vs evening
-  if (day === 2) {
-    if (explicitSlot === 'morning' || explicitSlot === 'evening') {
-      return `2_${explicitSlot}`;
-    }
-    // Fallback: Before 16:00 = morning, 16:00+ = evening
-    return hour < 16 ? '2_morning' : '2_evening';
-  }
-
-  // Friday (Day 5) splits: opening vs closing
-  if (day === 5) {
-    if (explicitSlot === 'opening' || explicitSlot === 'closing') {
-      return `5_${explicitSlot}`;
-    }
-    // Fallback: Before 14:00 = opening, 14:00+ = closing
-    return hour < 14 ? '5_opening' : '5_closing';
-  }
-
-  return day.toString();
-}
-
-/**
- * Get the ISO week number for a given date
- * Used to check if two shifts are in the same week
- */
-export const getWeekNumber = (dateStr: string): { year: number; week: number } => {
-  const date = new Date(dateStr);
-  // Get the first day of the year
-  const startOfYear = new Date(date.getFullYear(), 0, 1);
-  // Calculate the number of days since the start of the year
-  const days = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
-  // Calculate the week number
-  const weekNumber = Math.ceil((days + startOfYear.getDay() + 1) / 7);
-  return { year: date.getFullYear(), week: weekNumber };
-};
-
-/**
- * Check if two dates are in the same week
- */
-export const areDatesInSameWeek = (date1: string, date2: string): boolean => {
-  const week1 = getWeekNumber(date1);
-  const week2 = getWeekNumber(date2);
-  return week1.year === week2.year && week1.week === week2.week;
-};
-
-/**
- * Check if two dates are on the same day
- */
-export const areDatesOnSameDay = (date1: string, date2: string): boolean => {
-  return date1 === date2;
-};
-
-/**
- * Check if a volunteer can work a specific shift based on availability preferences
- * This checks: location, day preference, blackout dates, and only dates
- * Note: This does NOT check capacity - that should be checked separately
- */
-export const canVolunteerWorkShift = (volunteer: Volunteer, shift: Shift): boolean => {
-  // Check location compatibility
-  if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
-    if (volunteer.preferredLocation !== shift.location) return false;
-  }
-
-  // Check day preference (uses shift.shiftSlot when set, time-based fallback otherwise)
-  const dayCode = getShiftDayCode(shift);
-  if (!volunteer.preferredDays.includes(dayCode)) return false;
-
-  // Check blackout dates
-  if (volunteer.blackoutDates.includes(shift.date)) return false;
-
-  // Check only dates - if specified, volunteer can ONLY work these specific dates
-  if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
-    return false;
-  }
-
-  return true;
 };
 
 /**
@@ -265,22 +164,8 @@ export function scheduleShiftsMultiPass(
     // Check capacity
     if (used >= capacity) return false;
 
-    // Check location
-    if (volunteer.preferredLocation !== 'BOTH' && shift.location !== 'BOTH') {
-      if (volunteer.preferredLocation !== shift.location) return false;
-    }
-
-    // Check day preference (uses shift.shiftSlot when set, time-based fallback otherwise)
-    const dayCode = getShiftDayCode(shift);
-    if (!volunteer.preferredDays.includes(dayCode)) return false;
-
-    // Check blackout dates (blocked days)
-    if (volunteer.blackoutDates.includes(shift.date)) return false;
-
-    // Check only dates
-    if (volunteer.onlyDates.length > 0 && !volunteer.onlyDates.includes(shift.date)) {
-      return false;
-    }
+    // Preference gates (location, weekday, blackout, only-dates) — shared with the UI
+    if (!canVolunteerWorkShift(volunteer, shift)) return false;
 
     // Get volunteer's already assigned dates
     const assignedDates = volunteerAssignedDates.get(volunteer.id) || [];

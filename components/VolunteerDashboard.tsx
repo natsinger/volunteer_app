@@ -1854,6 +1854,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
               <p className="text-xs text-slate-500 mb-2">
                 If you set specific dates here, you will <strong>only</strong> be scheduled on these dates.
+                These dates count even if their weekday is not one of your preferred days.
                 Leave empty to be available on all your preferred days.
               </p>
               <div className="space-y-2 mb-3">
