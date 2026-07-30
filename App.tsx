@@ -179,7 +179,9 @@ const AppContent: React.FC = () => {
 
                 if (error) {
                   console.error('[App] Error saving volunteer:', error);
-                  throw new Error(error.message);
+                  // Include the PostgREST code (e.g. PGRST204 = unknown column) so schema
+                  // problems are diagnosable from a volunteer's error screenshot
+                  throw new Error(error.code ? `${error.message} (${error.code})` : error.message);
                 }
 
                 console.log('[App] Save successful, refreshing data...');

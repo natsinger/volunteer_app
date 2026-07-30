@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload, CalendarCheck, AlertTriangle, Pencil } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event, EventAttendance } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
@@ -40,20 +40,27 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    detail?: string;
+    type: 'success' | 'error';
+    action?: { label: string; onClick: () => void };
+  } | null>(null);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
-  // Session storage key for auto-save
+  // localStorage key for the edit-form draft (survives tab close, unlike sessionStorage)
   const DRAFT_STORAGE_KEY = `volunteer-draft-${currentUser.id}`;
+  const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-  // Auto-save to sessionStorage every 3 seconds while editing
+  // Auto-save draft to localStorage every 3 seconds while editing
   useEffect(() => {
     if (!isEditing) return;
 
     const saveTimer = setInterval(() => {
       try {
-        sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(editForm));
-        console.log('[VolunteerDashboard] Auto-saved draft to session storage');
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), form: editForm }));
+        console.log('[VolunteerDashboard] Auto-saved draft to local storage');
       } catch (error) {
         console.error('[VolunteerDashboard] Failed to auto-save draft:', error);
       }
@@ -66,14 +73,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   useEffect(() => {
     if (isEditing && !hasRestoredDraft) {
       try {
-        const savedDraft = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+        // Migrate any legacy sessionStorage draft (old format: bare form object)
+        const savedDraft = localStorage.getItem(DRAFT_STORAGE_KEY) ?? sessionStorage.getItem(DRAFT_STORAGE_KEY);
+        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
         if (savedDraft) {
-          const draftData = JSON.parse(savedDraft);
-          // Only restore if it's for the same user
-          if (draftData.id === currentUser.id) {
-            setEditForm(draftData);
+          const parsed = JSON.parse(savedDraft);
+          const form = parsed.form ?? parsed;
+          const savedAt = parsed.savedAt ?? Date.now();
+          const expired = Date.now() - savedAt > DRAFT_MAX_AGE_MS;
+          // Only restore if it's for the same user and not stale
+          if (form.id === currentUser.id && !expired) {
+            setEditForm(form);
             setToast({ message: 'Restored unsaved changes from previous session', type: 'success' });
-            console.log('[VolunteerDashboard] Restored draft from session storage');
+            console.log('[VolunteerDashboard] Restored draft from local storage');
+          } else if (expired) {
+            localStorage.removeItem(DRAFT_STORAGE_KEY);
           }
         }
       } catch (error) {
@@ -90,9 +104,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     }
   }, [isEditing]);
 
-  // Auto-dismiss toast after 4 seconds
+  // Auto-dismiss toast after 4 seconds; errors stay until dismissed
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.type === 'error') return;
     const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
@@ -723,6 +737,55 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     openGoogleCalendarForShift(shift);
   };
 
+  // Normalized snapshot of the fields the edit modal can change, for dirty-state comparison
+  const editSnapshot = (v: Volunteer) => JSON.stringify({
+    name: v.name,
+    email: v.email,
+    phone: v.phone,
+    frequency: v.frequency,
+    preferredLocation: v.preferredLocation,
+    preferredDays: [...(v.preferredDays || [])].sort(),
+    blackoutDates: [...(v.blackoutDates || [])].sort(),
+    onlyDates: [...(v.onlyDates || [])].sort(),
+    notes: v.notes || '',
+    avatarUrl: v.avatarUrl || '',
+  });
+
+  const isDirty = useMemo(
+    () => isEditing && editSnapshot(editForm) !== editSnapshot(currentUser),
+    [isEditing, editForm, currentUser]
+  );
+
+  // Warn before the tab closes/refreshes while there are unsaved edits
+  useEffect(() => {
+    if (!isEditing || !isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isEditing, isDirty]);
+
+  const discardDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (e) {
+      console.error('[VolunteerDashboard] Failed to clear draft:', e);
+    }
+  };
+
+  // Close the edit modal, asking about unsaved changes first
+  const requestCloseEditModal = () => {
+    if (isSaving) return;
+    if (isDirty) {
+      setShowDiscardConfirm(true);
+    } else {
+      discardDraft();
+      setIsEditing(false);
+    }
+  };
+
   const handleSave = async () => {
     // Strip past-month dates before saving
     const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
@@ -736,18 +799,19 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     try {
       await updateVolunteer(cleanedForm);
       console.log('[VolunteerDashboard] Save completed successfully');
-      // Clear draft from session storage on successful save
-      try {
-        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
-        console.log('[VolunteerDashboard] Cleared draft from session storage');
-      } catch (e) {
-        console.error('[VolunteerDashboard] Failed to clear draft:', e);
-      }
+      discardDraft();
+      setShowDiscardConfirm(false);
       setIsEditing(false);
       setToast({ message: 'Changes saved successfully', type: 'success' });
     } catch (error) {
       console.error('[VolunteerDashboard] Error saving volunteer data:', error);
-      setToast({ message: 'Failed to save changes. Please try again.', type: 'error' });
+      setShowDiscardConfirm(false);
+      setToast({
+        message: 'השמירה נכשלה — השינויים לא נשמרו',
+        detail: error instanceof Error ? error.message : String(error),
+        type: 'error',
+        action: { label: 'נסה שוב', onClick: () => handleSave() },
+      });
     } finally {
       setIsSaving(false);
     }
@@ -869,14 +933,27 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     <div className="h-full bg-slate-50 overflow-y-auto">
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all animate-fade-in flex items-center gap-2 ${
+        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all animate-fade-in max-w-sm ${
           toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
         }`}>
-          {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
-          {toast.message}
-          <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
-            <X size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
+            <span>{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
+              <X size={14} />
+            </button>
+          </div>
+          {toast.detail && (
+            <p className="mt-1 text-xs text-white/80 break-words">{toast.detail}</p>
+          )}
+          {toast.action && (
+            <button
+              onClick={() => { const a = toast.action; setToast(null); a?.onClick(); }}
+              className="mt-2 px-3 py-1 bg-white/20 hover:bg-white/30 rounded-md text-xs font-semibold"
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -1552,13 +1629,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       {isEditing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[calc(100vh-2rem)] overflow-y-auto">
-            <button 
-              onClick={() => setIsEditing(false)}
+            <button
+              onClick={requestCloseEditModal}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
               <X size={20} />
             </button>
-            
+
             <h2 className="text-xl font-bold text-slate-900 mb-6">Edit Profile & Availability</h2>
 
             {/* Avatar Upload */}
@@ -1846,7 +1923,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
               <button
-                onClick={() => setIsEditing(false)}
+                onClick={requestCloseEditModal}
                 disabled={isSaving}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -1869,6 +1946,40 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             </div>
 
           </div>
+
+          {/* Unsaved-changes confirmation */}
+          {showDiscardConfirm && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-4">
+              <div dir="rtl" className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 animate-fade-in text-right">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle size={20} className="text-amber-500 shrink-0" />
+                  <h3 className="text-base font-bold text-slate-900">יש שינויים שלא נשמרו — לשמור?</h3>
+                </div>
+                <div className="flex flex-col gap-2 mt-4">
+                  <button
+                    onClick={() => { setShowDiscardConfirm(false); handleSave(); }}
+                    disabled={isSaving}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    שמור
+                  </button>
+                  <button
+                    onClick={() => { setShowDiscardConfirm(false); discardDraft(); setIsEditing(false); }}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors disabled:opacity-50"
+                  >
+                    צא בלי לשמור
+                  </button>
+                  <button
+                    onClick={() => setShowDiscardConfirm(false)}
+                    className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+                  >
+                    המשך עריכה
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
