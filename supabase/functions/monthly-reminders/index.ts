@@ -64,6 +64,14 @@ serve(async (req) => {
     // Send email to each volunteer (with 600ms delay to stay under Resend's 2 req/sec limit)
     const appUrl = Deno.env.get('APP_URL') ?? 'https://volunteer-app-self.vercel.app/'
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
+
+    if (!resendApiKey) {
+      return new Response(
+        JSON.stringify({ error: 'RESEND_API_KEY is not set — cannot send emails' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+      )
+    }
+
     let sentCount = 0
     const errors: string[] = []
 
@@ -71,12 +79,6 @@ serve(async (req) => {
 
     for (const volunteer of volunteers) {
       try {
-        if (!resendApiKey) {
-          console.log(`[NO API KEY] Would send reminder to: ${volunteer.email}`)
-          sentCount++
-          continue
-        }
-
         const emailResponse = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
@@ -86,19 +88,13 @@ serve(async (req) => {
           body: JSON.stringify({
             from: 'VolunteerFlow <noreply@pnimeet.org.il>',
             to: volunteer.email,
-            subject: 'Update Your Volunteer Preferences',
+            subject: 'תזכורת למילוי העדפות באפליקציה של פנימית',
             html: `
-              <h2>Hi ${volunteer.name},</h2>
-              <p>This is a friendly reminder to update your volunteer preferences for next month.</p>
-              <p>Please log in and review:</p>
-              <ul>
-                <li>Your preferred days</li>
-                <li>Any blackout dates</li>
-                <li>Your availability status</li>
-                <li>Your location preference</li>
-              </ul>
-              <p><a href="${appUrl}">Update your preferences</a></p>
-              <p>Thank you for your continued support!</p>
+              <div dir="rtl" style="font-family: Arial, sans-serif; direction: rtl; text-align: right; max-width: 600px;">
+                <p>הי ${volunteer.name},</p>
+                <p>מוזמנים להיכנס לאזור האישי שלכם באפליקציה ולעדכן את הזמינות שלכם לחודש הקרוב. אם כבר עדכנתם — מצוין!</p>
+                <p><a href="${appUrl}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">כניסה לאפליקציה</a></p>
+              </div>
             `
           })
         })

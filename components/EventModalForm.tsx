@@ -4,6 +4,12 @@ import { createEvent, updateEvent } from '../services/eventService';
 
 interface EventModalFormProps {
   event: Event | null;
+  /**
+   * 'duplicate' prefills the form from `event` but always CREATES a new draft
+   * event (date cleared so the admin picks a fresh one). Defaults to 'edit'
+   * when an event is passed, 'create' otherwise.
+   */
+  mode?: 'create' | 'edit' | 'duplicate';
   onSave: () => void;
   onCancel: () => void;
 }
@@ -20,7 +26,8 @@ const DAYS_OF_WEEK = [
   { value: 6, label: 'Saturday' },
 ];
 
-const EventModalForm: React.FC<EventModalFormProps> = ({ event, onSave, onCancel }) => {
+const EventModalForm: React.FC<EventModalFormProps> = ({ event, mode, onSave, onCancel }) => {
+  const effectiveMode = mode ?? (event ? 'edit' : 'create');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startTime, setStartTime] = useState('09:00');
@@ -43,12 +50,14 @@ const EventModalForm: React.FC<EventModalFormProps> = ({ event, onSave, onCancel
       setLocation(event.location || '');
       setEmoji(event.emoji || '📅');
       setIsRecurring(event.isRecurring);
-      setDate(event.date || '');
+      // Duplicates keep everything except the dates — the admin picks new ones
+      const isDuplicate = mode === 'duplicate';
+      setDate(isDuplicate ? '' : event.date || '');
       setRecurrenceDayOfWeek(event.recurrenceDayOfWeek || 0);
-      setRecurrenceStartDate(event.recurrenceStartDate || '');
-      setRecurrenceEndDate(event.recurrenceEndDate || '');
+      setRecurrenceStartDate(isDuplicate ? '' : event.recurrenceStartDate || '');
+      setRecurrenceEndDate(isDuplicate ? '' : event.recurrenceEndDate || '');
     }
-  }, [event]);
+  }, [event, mode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,23 +91,22 @@ const EventModalForm: React.FC<EventModalFormProps> = ({ event, onSave, onCancel
       recurrenceDayOfWeek: isRecurring ? recurrenceDayOfWeek : undefined,
       recurrenceStartDate: isRecurring ? recurrenceStartDate : undefined,
       recurrenceEndDate: isRecurring && recurrenceEndDate ? recurrenceEndDate : undefined,
-      isPublished: event?.isPublished || false,
+      // Duplicates always start as unpublished drafts
+      isPublished: effectiveMode === 'edit' ? (event?.isPublished || false) : false,
     };
 
-    let result;
-    if (event) {
-      result = await updateEvent(event.id, eventData);
-    } else {
-      result = await createEvent(eventData);
-    }
+    const isUpdate = effectiveMode === 'edit' && event;
+    const result = isUpdate
+      ? await updateEvent(event.id, eventData)
+      : await createEvent(eventData);
 
     setIsSaving(false);
 
     if (result.success) {
-      alert(event ? 'Event updated successfully!' : 'Event created successfully!');
+      alert(isUpdate ? 'Event updated successfully!' : 'Event created successfully!');
       onSave();
     } else {
-      alert(`Failed to ${event ? 'update' : 'create'} event: ${result.error}`);
+      alert(`Failed to ${isUpdate ? 'update' : 'create'} event: ${result.error}`);
     }
   };
 
@@ -287,7 +295,7 @@ const EventModalForm: React.FC<EventModalFormProps> = ({ event, onSave, onCancel
           className="px-6 py-2 bg-pink-600 text-white rounded-lg font-medium hover:bg-pink-700 disabled:bg-slate-300"
           disabled={isSaving}
         >
-          {isSaving ? 'Saving...' : event ? 'Update Event' : 'Create Event'}
+          {isSaving ? 'Saving...' : effectiveMode === 'edit' && event ? 'Update Event' : effectiveMode === 'duplicate' ? 'Create Copy' : 'Create Event'}
         </button>
       </div>
     </form>

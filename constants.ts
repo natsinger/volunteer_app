@@ -115,6 +115,20 @@ export const MOCK_SHIFTS: Shift[] = generateMockShifts();
 
 export const SKILL_OPTIONS = ['First Aid', 'Crowd Control', 'Logistics', 'Driving', 'Leadership', 'Cooking', 'Registration'];
 
+// Day/slot options for the admin UI. IDs match the volunteers.preferred_days
+// codes ('0'-'6' plus the Tuesday/Friday split slots).
+export const ADMIN_DAY_OPTIONS = [
+  { id: '0', label: 'Sun' },
+  { id: '1', label: 'Mon' },
+  { id: '2_morning', label: 'Tue (AM)' },
+  { id: '2_evening', label: 'Tue (PM)' },
+  { id: '3', label: 'Wed' },
+  { id: '4', label: 'Thu' },
+  { id: '5_opening', label: 'Fri (Open)' },
+  { id: '5_closing', label: 'Fri (Close)' },
+  { id: '6', label: 'Sat' },
+];
+
 // Next month's schedule is built this many days before the end of the current
 // month. Volunteers are reminded to set their availability before this cutoff.
 export const SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END = 3;

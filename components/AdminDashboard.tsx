@@ -1,23 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Calendar, Sparkles, Plus, Trash2, Edit2,
-  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck
+  Search, CheckCircle, Clock, Upload, RefreshCw, BarChart3, ChevronLeft, ChevronRight, X, AlertTriangle, MapPin, User, Save, History, UserPlus, UserMinus, Mail, Repeat, UserCheck, ShieldCheck, Copy
 } from 'lucide-react';
 import { Volunteer, Shift, RecurringShift, DeletedShiftOccurrence, SavedSchedule, SavedScheduleAssignment, ShiftSwitchRequest, Event, EventAttendance } from '../types';
-import { generateScheduleAI, getMonthlyCapacity, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
+import { generateScheduleAI, canVolunteerWorkShift, generateMultipleScheduleOptions } from '../services/geminiService';
+import { getEffectiveCapacity, isMonthFullyBlocked } from '../lib/capacityUtils';
+import { getEligibilityIssues, ELIGIBILITY_ISSUE_LABELS } from '../lib/availabilityUtils';
+import { getTodayStr } from '../lib/dateUtils';
+import { ADMIN_DAY_OPTIONS } from '../constants';
 import BulkUploadModal from './BulkUploadModal';
 import InviteVolunteerModal from './InviteVolunteerModal';
 import EventModalForm from './EventModalForm';
+import CalendarView from './admin/CalendarView';
+import StatsView from './admin/StatsView';
 import { supabase } from '../lib/supabase';
 import { mapVolunteerToDB, mapVolunteerFromDB, mapShiftToDB, mapShiftFromDB, mapRecurringShiftFromDB, mapRecurringShiftToDB, mapDeletedOccurrenceFromDB } from '../lib/mappers';
 import { generateShiftInstances, mergeShifts, getMonthRange, getDayName } from '../lib/recurringShiftUtils';
 import { generateShiftsForNextMonths } from '../lib/shiftGenerator';
-import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, sendScheduleNotifications, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
+import { saveSchedule, updateSchedule, loadSavedSchedules, loadScheduleAssignments, deleteSchedule, getLatestScheduleForMonth, unpublishPreviousSchedules } from '../services/scheduleHistoryService';
 import { applyScheduleAssignments, getShiftAssignments, addVolunteerToShift as dbAddVolunteerToShift, removeVolunteerFromShift as dbRemoveVolunteerFromShift, clearMonthAssignments, getPendingSwitchRequests, getAllSwitchRequests } from '../services/shiftAssignmentService';
 import { getPendingUsers, approveUserAsAdmin, approveUserAsVolunteer, rejectPendingUser, PendingUser } from '../services/userApprovalService';
 import { sendPreferenceReminders } from '../services/reminderService';
+import { getConfirmationsForMonth, AvailabilityConfirmation } from '../services/availabilityConfirmationService';
 import { loadAllEvents, createEvent, updateEvent, deleteEvent, publishEvent, unpublishEvent, getEventAttendances } from '../services/eventService';
-import { sendShiftChangeNotifications, getCurrentAssignments } from '../services/shiftChangeNotificationService';
+import { notifySchedulePublished, notifyEventPublished } from '../services/emailNotificationService';
 
 interface AdminDashboardProps {
   volunteers: Volunteer[];
@@ -26,17 +33,7 @@ interface AdminDashboardProps {
   setShifts: React.Dispatch<React.SetStateAction<Shift[]>>;
 }
 
-const DAYS = [
-  { id: '0', label: 'Sun' },
-  { id: '1', label: 'Mon' },
-  { id: '2_morning', label: 'Tue (AM)' },
-  { id: '2_evening', label: 'Tue (PM)' },
-  { id: '3', label: 'Wed' },
-  { id: '4', label: 'Thu' },
-  { id: '5_opening', label: 'Fri (Open)' },
-  { id: '5_closing', label: 'Fri (Close)' },
-  { id: '6', label: 'Sat' },
-];
+const DAYS = ADMIN_DAY_OPTIONS;
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({
   volunteers, shifts, setVolunteers, setShifts
@@ -57,6 +54,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [invitingVolunteer, setInvitingVolunteer] = useState<Volunteer | null>(null);
   const [adminNewBlackoutDate, setAdminNewBlackoutDate] = useState('');
   const [adminNewBlackoutEndDate, setAdminNewBlackoutEndDate] = useState('');
+  const [adminNewOnlyDate, setAdminNewOnlyDate] = useState('');
+  const [adminNewOnlyEndDate, setAdminNewOnlyEndDate] = useState('');
 
   // Recurring Shift Management State
   const [recurringShifts, setRecurringShifts] = useState<RecurringShift[]>([]);
@@ -71,6 +70,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Calendar Details State
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
   const [selectedEventForDetails, setSelectedEventForDetails] = useState<Event | null>(null);
+  const [showOverrideVolunteers, setShowOverrideVolunteers] = useState(false);
+
+  // Collapse the override list whenever a different shift is opened
+  useEffect(() => {
+    setShowOverrideVolunteers(false);
+  }, [selectedShiftForDetails?.id]);
 
   // Delete Confirmation State
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'volunteer' | 'shift', id: string, name?: string } | null>(null);
@@ -88,6 +93,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [events, setEvents] = useState<Event[]>([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [eventModalMode, setEventModalMode] = useState<'create' | 'edit' | 'duplicate'>('create');
   const [eventAttendances, setEventAttendances] = useState<EventAttendance[]>([]);
 
   // Auto-Scheduler State: Default to Next Month
@@ -257,8 +263,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId
       }));
       setGeneratedAssignments(assignments);
-      // Capture initial state for change detection
-      setInitialAssignments([...assignments]);
       setSelectedOptionId(optionId);
       // A freshly generated option is a draft — not yet in the database — so
       // mark it unapplied. This keeps later manual edits local until the admin
@@ -273,7 +277,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
   const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
   const [assignmentsApplied, setAssignmentsApplied] = useState(false);
-  const [initialAssignments, setInitialAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
 
   // Multiple schedule options state
   const [scheduleOptions, setScheduleOptions] = useState<Array<{
@@ -290,6 +293,77 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }>>([]);
   const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
+
+  // --- Draft persistence: unapplied schedule work survives refresh/re-login ---
+  // The reported bug: a page refresh sent the admin back to login and every
+  // in-progress (not yet applied) schedule edit was lost. Applied schedules
+  // already reload from the DB (loadExistingAssignments); this covers drafts.
+  const DRAFT_VERSION = 1;
+  const ADMIN_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const adminDraftKey = `admin-schedule-draft-${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null);
+  // When a draft was restored for the current month, don't let the DB
+  // assignment load overwrite it
+  const draftRestoredRef = React.useRef(false);
+
+  const discardAdminDraft = () => {
+    try {
+      localStorage.removeItem(adminDraftKey);
+    } catch (e) {
+      console.error('[AdminDashboard] Failed to remove schedule draft:', e);
+    }
+    draftRestoredRef.current = false;
+    setRestoredDraftAt(null);
+  };
+
+  // Restore a saved draft when switching to (or mounting on) a month with no work in memory
+  useEffect(() => {
+    draftRestoredRef.current = false;
+    setRestoredDraftAt(null);
+    if (generatedAssignments.length > 0 || scheduleResultView !== 'none') return;
+    try {
+      const raw = localStorage.getItem(adminDraftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      const expired = !draft.savedAt || Date.now() - draft.savedAt > ADMIN_DRAFT_MAX_AGE_MS;
+      if (draft.version !== DRAFT_VERSION || expired) {
+        localStorage.removeItem(adminDraftKey);
+        return;
+      }
+      setGeneratedAssignments(draft.generatedAssignments ?? []);
+      setScheduleOptions(draft.scheduleOptions ?? []);
+      setSelectedOptionId(draft.selectedOptionId ?? null);
+      setScheduleResultView(draft.scheduleResultView ?? 'calendar');
+      setAssignmentsApplied(false); // drafts are unapplied by construction
+      draftRestoredRef.current = true;
+      setRestoredDraftAt(new Date(draft.savedAt).toLocaleString('en-GB'));
+      console.log('[AdminDashboard] Restored unapplied schedule draft for', adminDraftKey);
+    } catch (e) {
+      console.error('[AdminDashboard] Failed to restore schedule draft:', e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetMonth, targetYear]);
+
+  // Persist the draft (debounced) while there is unapplied work in memory
+  useEffect(() => {
+    if (assignmentsApplied) return; // applied schedules live in the DB
+    if (generatedAssignments.length === 0 && scheduleResultView === 'none') return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(adminDraftKey, JSON.stringify({
+          version: DRAFT_VERSION,
+          savedAt: Date.now(),
+          generatedAssignments,
+          scheduleOptions,
+          selectedOptionId,
+          scheduleResultView,
+        }));
+      } catch (e) {
+        console.error('[AdminDashboard] Failed to persist schedule draft:', e);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [adminDraftKey, assignmentsApplied, generatedAssignments, scheduleOptions, selectedOptionId, scheduleResultView]);
 
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
@@ -554,24 +628,64 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  // Temporarily allow editing the current month (April 2026) since the schedule needs updates
-  const getDefaultMinDate = () => {
-    const today = new Date();
-    if (today.getFullYear() === 2026 && today.getMonth() === 3) { // April 2026
-      return today.toISOString().split('T')[0];
+  const addAdminOnlyDate = () => {
+    if (!adminNewOnlyDate || !editingVolunteer) return;
+
+    const datesToAdd: string[] = [];
+
+    // If end date is specified, add all dates in range
+    if (adminNewOnlyEndDate && adminNewOnlyEndDate >= adminNewOnlyDate) {
+      const startDate = new Date(adminNewOnlyDate);
+      const endDate = new Date(adminNewOnlyEndDate);
+
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+        if (!editingVolunteer.onlyDates.includes(dateStr)) {
+          datesToAdd.push(dateStr);
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    } else {
+      // Single date
+      if (!editingVolunteer.onlyDates.includes(adminNewOnlyDate)) {
+        datesToAdd.push(adminNewOnlyDate);
+      }
     }
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    return nextMonth.toISOString().split('T')[0];
+
+    if (datesToAdd.length > 0) {
+      setEditingVolunteer({
+        ...editingVolunteer,
+        onlyDates: [...editingVolunteer.onlyDates, ...datesToAdd].sort()
+      });
+    }
+
+    setAdminNewOnlyDate('');
+    setAdminNewOnlyEndDate('');
   };
+
+  const removeAdminOnlyDate = (date: string) => {
+    if (!editingVolunteer) return;
+    setEditingVolunteer({
+      ...editingVolunteer,
+      onlyDates: editingVolunteer.onlyDates.filter(d => d !== date)
+    });
+  };
+
+  // Minimum selectable date for date pickers: admins may edit the current month
+  // (the live schedule gets adjusted mid-month)
+  const getDefaultMinDate = () => getTodayStr();
 
   const handleSaveVolunteerEdit = async () => {
     if (!editingVolunteer) return;
 
-    // Strip past-month dates before saving
-    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+    // Strip past dates before saving — same rule the modal uses for display,
+    // so exactly what the admin sees is what gets saved
+    const todayStr = getTodayStr();
     const cleanedVolunteer = {
       ...editingVolunteer,
-      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= currentMonthStart),
+      blackoutDates: editingVolunteer.blackoutDates.filter(d => d >= todayStr),
+      onlyDates: editingVolunteer.onlyDates.filter(d => d >= todayStr),
     };
 
     try {
@@ -624,12 +738,37 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleCreateEvent = () => {
     setEditingEvent(null);
+    setEventModalMode('create');
     setShowEventModal(true);
   };
 
   const handleEditEvent = (event: Event) => {
     setEditingEvent(event);
+    setEventModalMode('edit');
     setShowEventModal(true);
+  };
+
+  // Duplicate: prefill the form from an existing event; saving creates a new draft
+  const handleDuplicateEvent = (event: Event) => {
+    setEditingEvent(event);
+    setEventModalMode('duplicate');
+    setShowEventModal(true);
+  };
+
+  // Email all active volunteers about a published event (explicit, never automatic)
+  const handleNotifyEventVolunteers = async (event: Event) => {
+    const resendWarning = event.notifiedAt
+      ? `\n\nNote: volunteers were already notified on ${new Date(event.notifiedAt).toLocaleDateString('en-GB')} — this sends AGAIN to everyone.`
+      : '';
+    if (!confirm(`Email all active volunteers about "${event.title}"?${resendWarning}`)) return;
+
+    const result = await notifyEventPublished(event.id);
+    if (result.success) {
+      alert(`Event notification sent to ${result.sent} volunteer(s).`);
+      loadEvents(); // refresh notified_at
+    } else {
+      alert(`Failed to send event notifications: ${result.error || 'unknown error'}`);
+    }
   };
 
   const handleDeleteEvent = async (eventId: string) => {
@@ -675,9 +814,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Load existing assignments from the database
   const loadExistingAssignments = async () => {
     if (displayedShifts.length === 0) return;
+    // A restored unapplied draft is newer than whatever is in the DB — keep it
+    if (draftRestoredRef.current) return;
 
     const shiftIds = displayedShifts.map(s => s.id);
     const dbAssignments = await getShiftAssignments(shiftIds);
+
+    // Re-check after the await: the draft-restore effect may have run while
+    // the fetch was in flight (effect ordering on month switch) — a stale
+    // response must not clobber the restored draft
+    if (draftRestoredRef.current) return;
 
     // Convert to the format expected by generatedAssignments
     const assignments = dbAssignments.map(a => ({
@@ -782,8 +928,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       setAssignmentsApplied(true);
-      // Capture initial state after applying for change detection
-      setInitialAssignments([...generatedAssignments]);
+      // The work is in the DB now — the local draft is no longer needed
+      discardAdminDraft();
+
+      // Offer to email all active volunteers that the schedule is out.
+      // Behind a confirm so iterative re-applies don't spam everyone.
+      if (confirm(`Send a "schedule published" email to all active volunteers for ${monthName} ${targetYear}?`)) {
+        const notifyResult = await notifySchedulePublished(targetMonth, targetYear);
+        if (notifyResult.success) {
+          alert(`Schedule-published email sent to ${notifyResult.sent} volunteer(s).`);
+        } else {
+          alert(`Failed to send schedule-published emails: ${notifyResult.error || 'unknown error'}`);
+        }
+      }
     } catch (err) {
       console.error('Exception applying assignments:', err);
       alert('An error occurred while applying assignments');
@@ -823,6 +980,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setGeneratedAssignments([]);
       setAssignmentsApplied(false);
       setScheduleResultView('none');
+      discardAdminDraft();
 
       const deletedCount = clearResult.deletedCount || 0;
       alert(`Cleared ${deletedCount} volunteer assignment(s) for ${monthName} ${targetYear}.\n\nVolunteers will no longer see these shifts.\nSaved schedules in history are preserved.`);
@@ -875,37 +1033,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     if (result.success && result.scheduleId) {
-      // Detect shift changes and send notifications to affected volunteers
-      let changeNotificationsSent = 0;
-      try {
-        const changeResult = await sendShiftChangeNotifications(
-          initialAssignments,
-          generatedAssignments,
-          displayedShifts,
-          volunteers
-        );
-
-        if (changeResult.success) {
-          changeNotificationsSent = changeResult.emailsSent;
-          if (changeResult.emailsSent > 0) {
-            console.log(`✓ Sent ${changeResult.emailsSent} shift change notification(s)`);
-          }
-        } else if (changeResult.errors.length > 0) {
-          console.warn('Some shift change notifications failed:', changeResult.errors);
-        }
-      } catch (error) {
-        console.error('Error sending shift change notifications:', error);
-      }
-
-      // Update initial assignments to current state for future comparisons
-      setInitialAssignments([...generatedAssignments]);
 
       const action = saveMode === 'update' ? 'updated' : 'saved';
-      if (changeNotificationsSent > 0) {
-        alert(`Schedule ${action} successfully!\n\nSent ${changeNotificationsSent} shift change notification${changeNotificationsSent !== 1 ? 's' : ''} to affected volunteers.`);
-      } else {
-        alert(`Schedule ${action} successfully!`);
-      }
+      alert(`Schedule ${action} successfully!`);
 
       setShowSaveScheduleModal(false);
       setScheduleNameInput('');
@@ -927,8 +1057,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId: a.volunteerId,
       }));
       setGeneratedAssignments(assignments);
-      // Capture initial state for change detection
-      setInitialAssignments([...assignments]);
       setScheduleResultView('calendar');
       setShowScheduleHistory(false);
 
@@ -1083,16 +1211,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     )
     .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically by name
 
-  // Helper function to check if volunteer updated preferences in last 7 days
-  const wasRecentlyUpdated = (updatedAt?: string): boolean => {
-    if (!updatedAt) return false;
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    return new Date(updatedAt) > sevenDaysAgo;
-  };
+  // Availability confirmations for the target month: who explicitly updated or
+  // confirmed their availability for the month being scheduled (replaces the
+  // old "updated_at within 7 days" heuristic, which any profile touch tripped)
+  const [monthConfirmations, setMonthConfirmations] = useState<Map<string, AvailabilityConfirmation>>(new Map());
 
-  // Count recently updated volunteers
-  const recentlyUpdatedCount = volunteers.filter(vol => wasRecentlyUpdated(vol.updatedAt)).length;
+  useEffect(() => {
+    let cancelled = false;
+    getConfirmationsForMonth(targetMonth, targetYear).then(confirmations => {
+      if (cancelled) return;
+      setMonthConfirmations(new Map(confirmations.map(c => [c.volunteerId, c])));
+    });
+    return () => { cancelled = true; };
+  }, [targetMonth, targetYear, volunteers]);
+
+  const targetMonthName = new Date(targetYear, targetMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
+  const updatedForTargetMonthCount = volunteers.filter(vol => monthConfirmations.has(vol.id)).length;
 
   const getUpcomingWeekShifts = (allShifts: Shift[]) => {
     const today = new Date();
@@ -1106,367 +1240,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const visibleShifts = activeTab === 'shifts' ? getUpcomingWeekShifts(displayedShifts) : displayedShifts;
 
-  // --- Calendar & Stats Helper Components ---
-
-  const CalendarView = () => {
-    const year = targetYear;
-    const month = targetMonth - 1;
-
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startDayOffset = firstDay.getDay();
-    const monthName = firstDay.toLocaleString('default', { month: 'long', year: 'numeric' });
-
-    const days: (number | null)[] = [];
-    for (let i = 0; i < startDayOffset; i++) days.push(null);
-    for (let i = 1; i <= daysInMonth; i++) days.push(i);
-
-    // Filter published events for display
-    const publishedEvents = events.filter(e => e.isPublished);
-
-    return (
-      <div className="animate-fade-in">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-          <h2 className="text-xl font-bold text-slate-900">{monthName} Schedule</h2>
-          <div className="flex flex-wrap gap-3 text-xs sm:text-sm bg-white px-4 py-3 rounded-lg border border-slate-200 shadow-sm">
-            <div className="font-semibold text-slate-600 mr-1">Locations:</div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-4 rounded bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center">H</span>
-              <span>Hatachana</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-4 rounded bg-orange-500 text-white text-[9px] font-bold flex items-center justify-center">D</span>
-              <span>Dizengoff</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-4 h-4 rounded bg-purple-500 text-white text-[9px] font-bold flex items-center justify-center">B</span>
-              <span>Both</span>
-            </div>
-            <div className="w-px h-4 bg-slate-300"></div>
-            <div className="font-semibold text-slate-600">Staffing:</div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full border-2 border-red-500"></span>
-              <span>Critical (&lt;2)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full border-2 border-amber-400"></span>
-              <span>Minimal (2)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full border-2 border-emerald-500"></span>
-              <span>Good (3+)</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-              <div key={d} className="py-3 text-center text-sm font-semibold text-slate-600">{d}</div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 auto-rows-fr bg-slate-100 gap-px border-l border-slate-200">
-            {days.map((day, idx) => {
-              if (!day) return <div key={`empty-${idx}`} className="bg-white min-h-[200px]" />;
-
-              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const daysShifts = shifts.filter(s => s.date === dateStr).sort((a, b) => a.startTime.localeCompare(b.startTime));
-
-              // Filter events for this date
-              const dayEvents = publishedEvents.filter(event => {
-                if (event.isRecurring) {
-                  // Check if this date falls on the recurring day
-                  const date = new Date(dateStr);
-                  const dayOfWeek = date.getDay();
-
-                  // Check if day matches
-                  if (dayOfWeek !== event.recurrenceDayOfWeek) return false;
-
-                  // Check if within recurrence date range
-                  if (event.recurrenceStartDate && dateStr < event.recurrenceStartDate) return false;
-                  if (event.recurrenceEndDate && dateStr > event.recurrenceEndDate) return false;
-
-                  return true;
-                } else {
-                  // One-time event
-                  return event.date === dateStr;
-                }
-              });
-
-              return (
-                <div key={day} className="bg-white min-h-[200px] p-3 hover:bg-slate-50 transition-colors flex flex-col">
-                  <div className="text-base font-bold text-slate-400 mb-2">{day}</div>
-                  <div className="space-y-2 flex-1">
-                    {daysShifts.map(s => {
-                      // Determine location from shift properties
-                      const location = s.location || 'BOTH';
-                      const isDizengoff = location === 'DIZENGOFF';
-                      const isHatachana = location === 'HATACHANA';
-                      const isBoth = location === 'BOTH';
-
-                      // Find all assignments for this shift from the AI result
-                      const assignees = generatedAssignments
-                        .filter(a => a.shiftId === s.id)
-                        .map(a => volunteers.find(v => v.id === a.volunteerId))
-                        .filter(Boolean) as Volunteer[];
-
-                      const count = assignees.length;
-
-                      // Status logic
-                      let borderClass = 'border-red-400'; // Critical
-                      if (count >= 2) borderClass = 'border-amber-400'; // Minimal
-                      if (count >= 3) borderClass = 'border-emerald-500'; // Good
-
-                      // Location colors - more distinct
-                      let bgClass = 'bg-slate-50';
-                      let textClass = 'text-slate-900';
-                      let locationBadge = '';
-                      let locationBadgeClass = '';
-
-                      if (isDizengoff) {
-                        bgClass = 'bg-orange-50';
-                        textClass = 'text-orange-900';
-                        locationBadge = 'D';
-                        locationBadgeClass = 'bg-orange-500 text-white';
-                      } else if (isHatachana) {
-                        bgClass = 'bg-blue-50';
-                        textClass = 'text-blue-900';
-                        locationBadge = 'H';
-                        locationBadgeClass = 'bg-blue-500 text-white';
-                      } else if (isBoth) {
-                        bgClass = 'bg-purple-50';
-                        textClass = 'text-purple-900';
-                        locationBadge = 'B';
-                        locationBadgeClass = 'bg-purple-500 text-white';
-                      }
-
-                      return (
-                        <div
-                          key={s.id}
-                          onClick={() => setSelectedShiftForDetails(s)}
-                          className={`
-                            cursor-pointer group relative pl-2 pr-1 py-1.5 rounded-r border-l-4 text-xs shadow-sm hover:shadow-md transition-all
-                            ${bgClass}
-                            ${borderClass}
-                          `}
-                        >
-                          <div className="flex justify-between items-center mb-1 gap-1">
-                             <div className="flex items-center gap-1">
-                               <span className={`w-4 h-4 rounded text-[9px] font-bold flex items-center justify-center ${locationBadgeClass}`}>
-                                 {locationBadge}
-                               </span>
-                               <span className={`font-bold ${textClass}`}>
-                                 {s.startTime.slice(0, 5)}
-                               </span>
-                             </div>
-                             <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                               count < 2 ? 'bg-red-100 text-red-700' :
-                               count >= 3 ? 'bg-emerald-100 text-emerald-700' :
-                               'bg-amber-100 text-amber-700'
-                             }`}>
-                               {count}/5
-                             </span>
-                          </div>
-
-                          <div className="space-y-1">
-                            {assignees.slice(0, 6).map(v => (
-                              <div key={v.id} className="truncate opacity-90 text-[15px] font-medium flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                                {v.name}
-                              </div>
-                            ))}
-                            {count > 6 && (
-                              <div className="text-[10px] opacity-60 italic pl-2">+{count - 6} more</div>
-                            )}
-                             {count === 0 && (
-                              <div className="text-[9px] text-red-500 italic">Unassigned</div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Render Events */}
-                    {dayEvents.map(event => (
-                      <div
-                        key={event.id}
-                        onClick={() => setSelectedEventForDetails(event)}
-                        className="cursor-pointer p-2 rounded border border-green-300 bg-green-50 text-xs hover:shadow-md transition-shadow"
-                        title={`${event.title}${event.description ? ': ' + event.description : ''}\n${event.startTime}-${event.endTime}${event.location ? '\n' + event.location : ''}`}
-                      >
-                        <div className="flex items-center gap-1.5 mb-1">
-                          {event.emoji && (
-                            <span className="text-base flex-shrink-0">{event.emoji}</span>
-                          )}
-                          <span className="font-bold text-green-800 text-xs">
-                            {event.startTime.slice(0,5)}
-                          </span>
-                        </div>
-                        <div className="text-xs text-green-700 font-medium truncate">
-                          {event.title}
-                        </div>
-                        {event.location && (
-                          <div className="text-[10px] text-green-600 truncate mt-0.5">
-                            {event.location}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const StatsView = () => {
+  // Effective capacity for the target month: frequency ceiling bounded by the
+  // weeks the volunteer is actually eligible for (blackouts, only-dates, prefs)
+  const getMonthEffectiveCapacity = (vol: Volunteer): number => {
     const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-
-    const stats = volunteers.map(vol => {
-      const capacity = getMonthlyCapacity(vol.frequency);
-
-      const volunteerAssignments = generatedAssignments.filter(a => {
-         const shift = shifts.find(s => s.id === a.shiftId);
-         return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
-      });
-
-      const assignedShifts = volunteerAssignments.map(a => {
-        return shifts.find(s => s.id === a.shiftId);
-      }).filter(Boolean).sort((a, b) => a!.date.localeCompare(b!.date));
-
-      const assignedCount = volunteerAssignments.length;
-      const percentage = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
-
-      return {
-        ...vol,
-        capacity,
-        assignedCount,
-        percentage,
-        assignedShifts
-      };
-    }).filter(vol =>
-      vol.name.toLowerCase().includes(statsSearchTerm.toLowerCase()) ||
-      vol.role.toLowerCase().includes(statsSearchTerm.toLowerCase())
-    ).sort((a, b) => b.percentage - a.percentage);
-
-    return (
-      <div className="animate-fade-in">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-slate-900">Volunteer Utilization ({targetMonthStr})</h2>
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-            <input
-              type="text"
-              placeholder="Search by name or role..."
-              className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              value={statsSearchTerm}
-              onChange={(e) => setStatsSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-4 font-semibold text-slate-700">Volunteer</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Role</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Assignments / Capacity</th>
-                <th className="px-6 py-4 font-semibold text-slate-700">Utilization</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {stats.map(vol => (
-                <React.Fragment key={vol.id}>
-                  <tr
-                    className="hover:bg-slate-50 cursor-pointer transition-colors"
-                    onClick={() => setExpandedVolunteerId(expandedVolunteerId === vol.id ? null : vol.id)}
-                  >
-                    <td className="px-6 py-4 text-base font-semibold text-slate-900">
-                      <div className="flex items-center gap-2">
-                        <ChevronRight
-                          size={16}
-                          className={`transition-transform ${expandedVolunteerId === vol.id ? 'rotate-90' : ''}`}
-                        />
-                        {vol.name}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-slate-600 text-sm">{vol.role} ({vol.skillLevel})</td>
-                    <td className="px-6 py-4 font-medium text-slate-800">
-                      <span className={vol.assignedCount > vol.capacity ? 'text-red-600 font-bold' : ''}>
-                         {vol.assignedCount}
-                      </span> / {vol.capacity}
-                    </td>
-                    <td className="px-6 py-4 w-1/3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              vol.assignedCount > vol.capacity ? 'bg-red-500' :
-                              vol.percentage >= 100 ? 'bg-emerald-500' :
-                              vol.percentage >= 50 ? 'bg-blue-500' : 'bg-amber-500'
-                            }`}
-                            style={{ width: `${Math.min(vol.percentage, 100)}%` }}
-                          ></div>
-                        </div>
-                        <span className={`text-xs font-semibold w-12 text-right ${vol.assignedCount > vol.capacity ? 'text-red-600' : 'text-slate-500'}`}>
-                          {Math.round(vol.percentage)}%
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                  {expandedVolunteerId === vol.id && (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-4 bg-slate-50">
-                        <div className="space-y-2">
-                          <h4 className="font-semibold text-slate-700 mb-3">Assigned Shifts for {vol.name}</h4>
-                          {vol.assignedShifts && vol.assignedShifts.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                              {vol.assignedShifts.map(shift => {
-                                const shiftDate = new Date(shift.date);
-                                const formattedDate = shiftDate.toLocaleDateString('en-US', {
-                                  weekday: 'short',
-                                  month: 'short',
-                                  day: 'numeric'
-                                });
-                                const location = shift.location || 'BOTH';
-                                let bgColor = 'bg-purple-100 border-purple-300';
-                                let locationText = 'Both Locations';
-                                if (location === 'DIZENGOFF') {
-                                  bgColor = 'bg-orange-100 border-orange-300';
-                                  locationText = 'Dizengoff';
-                                } else if (location === 'HATACHANA') {
-                                  bgColor = 'bg-blue-100 border-blue-300';
-                                  locationText = 'Hatachana';
-                                }
-
-                                return (
-                                  <div key={shift.id} className={`p-3 rounded-lg border ${bgColor}`}>
-                                    <div className="font-medium text-slate-900">{formattedDate}</div>
-                                    <div className="text-sm text-slate-600">{shift.startTime} - {shift.endTime}</div>
-                                    <div className="text-xs text-slate-500 mt-1">{locationText}</div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="text-slate-500 italic">No shifts assigned</div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
+    return getEffectiveCapacity(vol, displayedShifts.filter(s => s.date.startsWith(targetMonthStr)));
   };
+
+  // True when the volunteer's own blocked/allowed dates leave zero eligible
+  // shifts in the target month (an otherwise-workable month)
+  const isVolunteerMonthBlocked = (vol: Volunteer): boolean => {
+    const targetMonthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    return isMonthFullyBlocked(vol, displayedShifts.filter(s => s.date.startsWith(targetMonthStr)));
+  };
+
 
   const getSkillButtonClass = (volSkill: number, btnLevel: number) => {
     if (volSkill !== btnLevel) {
@@ -1535,15 +1322,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Volunteers Tab */}
         {activeTab === 'volunteers' && (
           <div className="max-w-7xl mx-auto animate-fade-in">
-            {/* Recently Updated Summary */}
-            {recentlyUpdatedCount > 0 && (
+            {/* Availability-Updated Summary for the target month */}
+            {updatedForTargetMonthCount > 0 && (
               <div className="mb-6 bg-gradient-to-r from-emerald-50 to-emerald-100 border border-emerald-200 rounded-xl p-4 flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center">
                   <CheckCircle size={24} className="text-white" />
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-emerald-900">
-                    {recentlyUpdatedCount} {recentlyUpdatedCount === 1 ? 'volunteer has' : 'volunteers have'} updated preferences in the last 7 days
+                    {updatedForTargetMonthCount} of {volunteers.length} volunteers confirmed availability for {targetMonthName}
                   </h3>
                   <p className="text-sm text-emerald-700">Volunteers are active! This is a great time to run the auto-scheduler.</p>
                 </div>
@@ -1603,11 +1390,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="text-base font-semibold text-slate-900">{vol.name}</div>
-                          {wasRecentlyUpdated(vol.updatedAt) && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200" title="Updated preferences in the last 7 days">
-                              <CheckCircle size={12} className="mr-1" /> Updated
-                            </span>
-                          )}
+                          {(() => {
+                            const conf = monthConfirmations.get(vol.id);
+                            if (!conf) return null;
+                            const when = new Date(conf.confirmedAt).toLocaleDateString('en-GB');
+                            const how = conf.source === 'updated' ? 'updated availability' : 'confirmed (no changes)';
+                            return (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                title={`${how} for ${targetMonthName} on ${when}`}
+                              >
+                                <CheckCircle size={12} className="mr-1" /> Updated for {targetMonthName}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="text-sm text-slate-500">{vol.email}</div>
                         <div className="text-xs text-slate-400">{vol.phone}</div>
@@ -1648,6 +1444,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       </td>
                        <td className="px-6 py-4">
+                        {isVolunteerMonthBlocked(vol) && (
+                          <div className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200 mb-1"
+                               title={`Their blocked/allowed dates leave no eligible shifts in ${targetMonthName}`}>
+                            Blocked all of {targetMonthName}
+                          </div>
+                        )}
                         {vol.blackoutDates && vol.blackoutDates.length > 0 && (
                           <div className="text-xs text-red-500 mb-1" title={vol.blackoutDates.join(', ')}>
                             {vol.blackoutDates.length} blackout dates
@@ -1882,7 +1684,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Auto-Schedule Tab */}
         {activeTab === 'auto' && (
           <div className="max-w-7xl mx-auto animate-fade-in text-center pt-2">
-            
+
+            {/* Restored-draft notice */}
+            {restoredDraftAt && (
+              <div className="mb-4 bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2 text-sm text-blue-800">
+                  <History size={16} className="shrink-0" />
+                  Restored an unsaved schedule draft from {restoredDraftAt}. It has not been applied to the database.
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm('Discard the restored draft? This clears the current unapplied schedule.')) {
+                      discardAdminDraft();
+                      setGeneratedAssignments([]);
+                      setScheduleOptions([]);
+                      setSelectedOptionId(null);
+                      setScheduleResultView('none');
+                    }
+                  }}
+                  className="text-xs font-semibold text-blue-700 hover:text-red-600 whitespace-nowrap px-2 py-1 rounded hover:bg-blue-100 transition-colors"
+                >
+                  Discard draft
+                </button>
+              </div>
+            )}
+
             {scheduleResultView === 'none' ? (
               <div className="pt-6">
                 <div className="inline-block p-4 bg-emerald-100 rounded-full text-emerald-600 mb-6">
@@ -2059,7 +1885,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
                 
-                {scheduleResultView === 'calendar' ? CalendarView() : StatsView()}
+                {scheduleResultView === 'calendar' ? (
+                  <CalendarView
+                    targetYear={targetYear}
+                    targetMonth={targetMonth}
+                    shifts={shifts}
+                    events={events}
+                    volunteers={volunteers}
+                    generatedAssignments={generatedAssignments}
+                    onSelectShift={setSelectedShiftForDetails}
+                    onSelectEvent={setSelectedEventForDetails}
+                  />
+                ) : (
+                  <StatsView
+                    targetYear={targetYear}
+                    targetMonth={targetMonth}
+                    volunteers={volunteers}
+                    shifts={shifts}
+                    generatedAssignments={generatedAssignments}
+                    statsSearchTerm={statsSearchTerm}
+                    setStatsSearchTerm={setStatsSearchTerm}
+                    expandedVolunteerId={expandedVolunteerId}
+                    setExpandedVolunteerId={setExpandedVolunteerId}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -2148,6 +1997,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2 ml-4">
+                        {event.isPublished && (
+                          <button
+                            onClick={() => handleNotifyEventVolunteers(event)}
+                            className="px-3 py-1.5 rounded-lg font-medium text-sm transition-colors bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1.5"
+                            title={event.notifiedAt
+                              ? `Volunteers were notified on ${new Date(event.notifiedAt).toLocaleDateString('en-GB')} — sends again`
+                              : 'Email all active volunteers about this event'}
+                          >
+                            <Mail size={14} />
+                            {event.notifiedAt ? 'Notify Again' : 'Notify Volunteers'}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleToggleEventPublish(event)}
                           className={`px-3 py-1.5 rounded-lg font-medium text-sm transition-colors ${
@@ -2163,6 +2024,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
                         >
                           <Edit2 size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDuplicateEvent(event)}
+                          className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                          title="Duplicate event"
+                        >
+                          <Copy size={18} />
                         </button>
                         <button
                           onClick={() => handleDeleteEvent(event.id)}
@@ -2390,7 +2258,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                          const s = shifts.find(sh => sh.id === a.shiftId);
                                          return s && s.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
                                        }).length;
-                                       const capacity = getMonthlyCapacity(vol.frequency);
+                                       const capacity = getMonthEffectiveCapacity(vol);
                                        return `${assignedCount}/${capacity}`;
                                      })()}
                                    </div>
@@ -2487,115 +2355,175 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                          .map(a => a.volunteerId)
                      );
 
-                     const availableVolunteers = volunteers
-                       .filter(v => v.availabilityStatus === 'Active')
-                       .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails)) // Only show volunteers who can work this shift
-                       .filter(v => !volunteersWithShiftsThisWeek.has(v.id)) // Exclude volunteers with shifts in the same week
-                       .map(vol => {
-                         const capacity = getMonthlyCapacity(vol.frequency);
-                         const assignedCount = generatedAssignments.filter(a => {
-                           const shift = shifts.find(s => s.id === a.shiftId);
-                           return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
-                         }).length;
-                         const utilization = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
+                     const decorate = (vol: Volunteer) => {
+                       const capacity = getMonthEffectiveCapacity(vol);
+                       const assignedCount = generatedAssignments.filter(a => {
+                         const shift = shifts.find(s => s.id === a.shiftId);
+                         return shift && shift.date.startsWith(targetMonthStr) && a.volunteerId === vol.id;
+                       }).length;
+                       const utilization = capacity > 0 ? (assignedCount / capacity) * 100 : 0;
+                       return { ...vol, capacity, assignedCount, utilization };
+                     };
 
-                         return {
-                           ...vol,
-                           capacity,
-                           assignedCount,
-                           utilization,
-                           isAlreadyAssigned: assignedVolunteerIds.has(vol.id),
-                         };
-                       })
-                       .sort((a, b) => {
-                         // Sort: unassigned first, then by utilization
-                         if (a.isAlreadyAssigned && !b.isAlreadyAssigned) return 1;
-                         if (!a.isAlreadyAssigned && b.isAlreadyAssigned) return -1;
-                         return a.utilization - b.utilization;
-                       });
-
-                     return availableVolunteers.length > 0 ? (
-                       availableVolunteers.map(vol => (
-                         <div key={vol.id} className={`p-2 rounded-lg border transition-colors ${
-                           vol.isAlreadyAssigned
-                             ? 'bg-indigo-50 border-indigo-200'
-                             : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                         }`}>
-                          <div className="flex items-center justify-between">
-                           <div className="flex items-center gap-2 flex-1">
-                             <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-                               vol.isAlreadyAssigned
-                                 ? 'bg-indigo-200 text-indigo-700'
-                                 : 'bg-slate-200 text-slate-700'
-                             }`}>
-                               {vol.name.charAt(0)}
-                             </div>
-                             <div className="flex-1">
-                               <div className="flex items-center gap-2">
-                                 <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
-                                 {vol.isAlreadyAssigned && (
-                                   <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium">
-                                     Already Assigned
-                                   </span>
-                                 )}
-                               </div>
-                               <div className="text-xs text-slate-500">
-                                 {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
-                               </div>
-                             </div>
-                           </div>
-                           {!vol.isAlreadyAssigned && (
-                             <button
-                               onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
-                               className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
-                               title="Add to shift"
-                             >
-                               <UserPlus size={16} />
-                             </button>
-                           )}
-                          </div>
-                          <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
-                            <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                              vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
-                              vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
-                              'bg-purple-100 text-purple-700'
-                            }`}>
-                              {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
-                            </span>
-                            {vol.preferredDays.map(dayId => {
-                              const day = DAYS.find(d => d.id === dayId);
-                              return day ? (
-                                <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
-                                  {day.label}
-                                </span>
-                              ) : null;
-                            })}
-                          </div>
-                          {(() => {
-                            const assignedDates = generatedAssignments
-                              .filter(a => {
-                                if (a.volunteerId !== vol.id) return false;
-                                const s = shifts.find(sh => sh.id === a.shiftId);
-                                return s && s.date.startsWith(targetMonthStr);
-                              })
-                              .map(a => {
-                                const s = shifts.find(sh => sh.id === a.shiftId);
-                                return s ? parseInt(s.date.split('-')[2], 10) : 0;
-                              })
-                              .filter(d => d > 0)
-                              .sort((a, b) => a - b);
-                            return assignedDates.length > 0 ? (
-                              <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
-                                Assigned: {assignedDates.join(', ')}
-                              </div>
-                            ) : null;
-                          })()}
+                     const assignedDatesLine = (volId: string) => {
+                       const assignedDates = generatedAssignments
+                         .filter(a => {
+                           if (a.volunteerId !== volId) return false;
+                           const s = shifts.find(sh => sh.id === a.shiftId);
+                           return s && s.date.startsWith(targetMonthStr);
+                         })
+                         .map(a => {
+                           const s = shifts.find(sh => sh.id === a.shiftId);
+                           return s ? parseInt(s.date.split('-')[2], 10) : 0;
+                         })
+                         .filter(d => d > 0)
+                         .sort((a, b) => a - b);
+                       return assignedDates.length > 0 ? (
+                         <div className="ml-9 text-[10px] text-slate-400 mt-0.5">
+                           Assigned: {assignedDates.join(', ')}
                          </div>
-                       ))
-                     ) : (
-                       <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
-                         No available volunteers for this shift.
+                       ) : null;
+                     };
+
+                     const prefChips = (vol: Volunteer) => (
+                       <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                         <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                           vol.preferredLocation === 'HATACHANA' ? 'bg-amber-100 text-amber-700' :
+                           vol.preferredLocation === 'DIZENGOFF' ? 'bg-sky-100 text-sky-700' :
+                           'bg-purple-100 text-purple-700'
+                         }`}>
+                           {vol.preferredLocation === 'HATACHANA' ? 'Hatachana' : vol.preferredLocation === 'DIZENGOFF' ? 'Dizengoff' : 'Both'}
+                         </span>
+                         {vol.preferredDays.map(dayId => {
+                           const day = DAYS.find(d => d.id === dayId);
+                           return day ? (
+                             <span key={dayId} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+                               {day.label}
+                             </span>
+                           ) : null;
+                         })}
                        </div>
+                     );
+
+                     // Volunteers already on this shift live in the left column
+                     const activeCandidates = volunteers
+                       .filter(v => v.availabilityStatus === 'Active')
+                       .filter(v => !assignedVolunteerIds.has(v.id));
+
+                     const matchingVolunteers = activeCandidates
+                       .filter(v => canVolunteerWorkShift(v, selectedShiftForDetails))
+                       .filter(v => !volunteersWithShiftsThisWeek.has(v.id))
+                       .map(decorate)
+                       .sort((a, b) => a.utilization - b.utilization);
+
+                     // Everyone else, with the reasons they don't match — admin can override-add
+                     const matchingIds = new Set(matchingVolunteers.map(m => m.id));
+                     const overrideVolunteers = activeCandidates
+                       .filter(v => !matchingIds.has(v.id))
+                       .map(vol => {
+                         const d = decorate(vol);
+                         const issues: string[] = getEligibilityIssues(vol, selectedShiftForDetails)
+                           .map(issue => ELIGIBILITY_ISSUE_LABELS[issue]);
+                         if (volunteersWithShiftsThisWeek.has(vol.id)) issues.push('Already scheduled this week');
+                         if (d.assignedCount >= d.capacity) issues.push('At capacity');
+                         return { ...d, issues };
+                       })
+                       .sort((a, b) => a.issues.length - b.issues.length);
+
+                     const handleOverrideAdd = (vol: { id: string; name: string; issues: string[] }) => {
+                       const confirmed = confirm(
+                         `${vol.name} does not match this shift:\n• ${vol.issues.join('\n• ')}\n\nAdd anyway?`
+                       );
+                       if (confirmed) {
+                         handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id);
+                       }
+                     };
+
+                     return (
+                       <>
+                         {matchingVolunteers.length > 0 ? (
+                           matchingVolunteers.map(vol => (
+                             <div key={vol.id} className="p-2 rounded-lg border transition-colors bg-slate-50 border-slate-200 hover:bg-slate-100">
+                              <div className="flex items-center justify-between">
+                               <div className="flex items-center gap-2 flex-1">
+                                 <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-slate-200 text-slate-700">
+                                   {vol.name.charAt(0)}
+                                 </div>
+                                 <div className="flex-1">
+                                   <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
+                                   <div className="text-xs text-slate-500">
+                                     {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                   </div>
+                                 </div>
+                               </div>
+                               <button
+                                 onClick={() => handleAddVolunteerToShift(selectedShiftForDetails.id, vol.id)}
+                                 className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                 title="Add to shift"
+                               >
+                                 <UserPlus size={16} />
+                               </button>
+                              </div>
+                              {prefChips(vol)}
+                              {assignedDatesLine(vol.id)}
+                             </div>
+                           ))
+                         ) : (
+                           <div className="text-center py-6 text-slate-400 italic bg-slate-50 rounded-lg text-sm">
+                             No matching volunteers for this shift.
+                           </div>
+                         )}
+
+                         {/* Override section: volunteers whose preferences/constraints don't match */}
+                         {overrideVolunteers.length > 0 && (
+                           <div className="pt-2">
+                             <button
+                               onClick={() => setShowOverrideVolunteers(prev => !prev)}
+                               className="w-full text-left text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors flex items-center gap-2"
+                             >
+                               <AlertTriangle size={14} />
+                               {showOverrideVolunteers ? 'Hide' : 'Show'} non-matching volunteers ({overrideVolunteers.length}) — override
+                             </button>
+                             {showOverrideVolunteers && (
+                               <div className="space-y-2 mt-2">
+                                 {overrideVolunteers.map(vol => (
+                                   <div key={vol.id} className="p-2 rounded-lg border bg-amber-50/60 border-amber-200">
+                                    <div className="flex items-center justify-between">
+                                     <div className="flex items-center gap-2 flex-1">
+                                       <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-amber-200 text-amber-800">
+                                         {vol.name.charAt(0)}
+                                       </div>
+                                       <div className="flex-1">
+                                         <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
+                                         <div className="text-xs text-slate-500">
+                                           {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                         </div>
+                                       </div>
+                                     </div>
+                                     <button
+                                       onClick={() => handleOverrideAdd(vol)}
+                                       className="text-amber-700 hover:text-amber-800 hover:bg-amber-100 p-1 rounded transition-colors"
+                                       title="Add despite mismatch"
+                                     >
+                                       <UserPlus size={16} />
+                                     </button>
+                                    </div>
+                                    <div className="mt-1.5 ml-9 flex flex-wrap items-center gap-1">
+                                      {vol.issues.map(issue => (
+                                        <span key={issue} className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-medium rounded border border-amber-200">
+                                          {issue}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {prefChips(vol)}
+                                    {assignedDatesLine(vol.id)}
+                                   </div>
+                                 ))}
+                               </div>
+                             )}
+                           </div>
+                         )}
+                       </>
                      );
                    })()}
                 </div>
@@ -2748,7 +2676,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                 <div className="flex flex-wrap gap-2">
                   {editingVolunteer.blackoutDates
-                    .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                    .filter(d => d >= getTodayStr())
                     .map(date => (
                     <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
                       {date}
@@ -2757,8 +2685,74 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </button>
                     </span>
                   ))}
-                  {editingVolunteer.blackoutDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
+                  {editingVolunteer.blackoutDates.filter(d => d >= getTodayStr()).length === 0 && (
                     <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
+                  )}
+                  {editingVolunteer.blackoutDates.filter(d => d < getTodayStr()).length > 0 && (
+                    <span className="text-slate-400 text-xs italic self-center"
+                          title="Past dates are removed automatically on save">
+                      +{editingVolunteer.blackoutDates.filter(d => d < getTodayStr()).length} past
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Only Dates - the specific dates the volunteer said they CAN come */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Only Dates (Can ONLY come on these)</label>
+                <p className="text-xs text-slate-500 mb-2">
+                  If any dates are set, this volunteer is scheduled <strong>only</strong> on them —
+                  even when the weekday is not in their preferred days.
+                </p>
+                <div className="space-y-2 mb-3">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewOnlyDate}
+                      onChange={(e) => setAdminNewOnlyDate(e.target.value)}
+                      min={getDefaultMinDate()}
+                      placeholder="Start date"
+                    />
+                    <span className="text-slate-400 text-sm">to</span>
+                    <input
+                      type="date"
+                      className="flex-1 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                      value={adminNewOnlyEndDate}
+                      onChange={(e) => setAdminNewOnlyEndDate(e.target.value)}
+                      min={adminNewOnlyDate || getDefaultMinDate()}
+                      placeholder="End date (optional)"
+                    />
+                    <button
+                      onClick={addAdminOnlyDate}
+                      disabled={!adminNewOnlyDate}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Plus size={18} />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {editingVolunteer.onlyDates
+                    .filter(d => d >= getTodayStr())
+                    .map(date => (
+                    <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md text-sm">
+                      {date}
+                      <button onClick={() => removeAdminOnlyDate(date)} className="hover:bg-emerald-100 rounded p-0.5">
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  {editingVolunteer.onlyDates.filter(d => d >= getTodayStr()).length === 0 && (
+                    <span className="text-slate-400 text-sm italic">No restriction — all preferred days count</span>
+                  )}
+                  {editingVolunteer.onlyDates.filter(d => d < getTodayStr()).length > 0 && (
+                    <span className="text-slate-400 text-xs italic self-center"
+                          title="Past dates are removed automatically on save">
+                      +{editingVolunteer.onlyDates.filter(d => d < getTodayStr()).length} past
+                    </span>
                   )}
                 </div>
               </div>
@@ -2789,6 +2783,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   setEditingVolunteer(null);
                   setAdminNewBlackoutDate('');
                   setAdminNewBlackoutEndDate('');
+                  setAdminNewOnlyDate('');
+                  setAdminNewOnlyEndDate('');
                 }}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium"
               >
@@ -2898,6 +2894,48 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 )}
               </div>
             </div>
+
+            {/* RSVP'd volunteers, grouped by date (recurring events span several dates) */}
+            {(() => {
+              const eventRsvps = eventAttendances.filter(a => a.eventId === selectedEventForDetails.id);
+              if (eventRsvps.length === 0) {
+                return (
+                  <div className="mt-5 pt-4 border-t border-slate-100 text-sm text-slate-400 italic">
+                    No volunteers have confirmed attendance yet.
+                  </div>
+                );
+              }
+              const byDate = new Map<string, string[]>();
+              eventRsvps.forEach(a => {
+                const name = volunteers.find(v => v.id === a.volunteerId)?.name ?? 'Unknown volunteer';
+                byDate.set(a.eventDate, [...(byDate.get(a.eventDate) ?? []), name]);
+              });
+              const dates = [...byDate.keys()].sort();
+              return (
+                <div className="mt-5 pt-4 border-t border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <UserCheck size={16} className="text-green-600" />
+                    Attending ({eventRsvps.length})
+                  </h3>
+                  <div className="space-y-3 max-h-56 overflow-y-auto">
+                    {dates.map(date => (
+                      <div key={date}>
+                        <div className="text-xs font-semibold text-slate-500 mb-1.5">
+                          {date} · {byDate.get(date)!.length} volunteer{byDate.get(date)!.length !== 1 ? 's' : ''}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {byDate.get(date)!.sort().map(name => (
+                            <span key={name} className="px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-xs font-medium">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="mt-6 flex justify-end">
               <button
@@ -3079,15 +3117,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             <div className="mb-6">
               <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <Calendar size={24} className="text-pink-600" /> {editingEvent ? 'Edit Event' : 'Create New Event'}
+                <Calendar size={24} className="text-pink-600" />
+                {eventModalMode === 'duplicate' ? 'Duplicate Event' : editingEvent ? 'Edit Event' : 'Create New Event'}
               </h2>
               <p className="text-sm text-slate-500 mt-2">
-                Events will be visible to all volunteers once published
+                {eventModalMode === 'duplicate'
+                  ? 'A new draft event will be created — pick a new date'
+                  : 'Events will be visible to all volunteers once published'}
               </p>
             </div>
 
             <EventModalForm
               event={editingEvent}
+              mode={eventModalMode}
               onSave={() => {
                 setShowEventModal(false);
                 setEditingEvent(null);

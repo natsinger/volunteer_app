@@ -391,3 +391,21 @@ entrypoint = "./functions/send-email/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/send-email/*.html" ]
+
+[functions.monthly-reminders]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/monthly-reminders/index.ts"
+
+# Both notification functions additionally verify the caller is an admin
+# (admins-table check inside the function) — verify_jwt alone only proves
+# a valid Supabase JWT, which any signed-in volunteer has.
+[functions.send-schedule-published]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/send-schedule-published/index.ts"
+
+[functions.send-event-notification]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/send-event-notification/index.ts"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar, Clock, MapPin, Check, Plus, Trash2, X, RefreshCw, Repeat, Users, User, Phone, Camera, Upload, CalendarCheck, AlertTriangle, Pencil } from 'lucide-react';
 import { Volunteer, Shift, ShiftAssignment, ShiftSwitchRequest, SavedSchedule, SavedScheduleAssignment, Event, EventAttendance } from '../types';
 import { getVolunteerAssignments, getVolunteerSwitchRequests, createSwitchRequest, acceptSwitchRequest, cancelSwitchRequest, removeVolunteerFromShift, addVolunteerToShift, getShiftAssignments } from '../services/shiftAssignmentService';
@@ -8,8 +8,10 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
-import { formatDateDDMMYYYY, formatMonthYear } from '../lib/dateUtils';
+import { formatDateDDMMYYYY, formatMonthYear, getFirstOfNextMonthStr } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
+import { isOpeningShift } from '../lib/availabilityUtils';
+import { getSchedulingTargetMonth, getMyConfirmation, confirmAvailability } from '../services/availabilityConfirmationService';
 import { SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END } from '../constants';
 
 interface VolunteerDashboardProps {
@@ -40,20 +42,71 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [myAssignments, setMyAssignments] = useState<ShiftAssignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    detail?: string;
+    type: 'success' | 'error';
+    action?: { label: string; onClick: () => void };
+  } | null>(null);
   const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
-  // Session storage key for auto-save
+  // Availability confirmation for the scheduling target month (= next month).
+  // null while loading; then whether a confirmation row exists.
+  const [availabilityConfirmed, setAvailabilityConfirmed] = useState<boolean | null>(null);
+  const [showAvailabilityPrompt, setShowAvailabilityPrompt] = useState(false);
+  const [isConfirmingAvailability, setIsConfirmingAvailability] = useState(false);
+  const confirmationTarget = getSchedulingTargetMonth();
+  const availabilityPromptDismissKey = `availability-prompt-dismissed-${confirmationTarget.year}-${confirmationTarget.month}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyConfirmation(currentUser.id, confirmationTarget.month, confirmationTarget.year).then(conf => {
+      if (!cancelled) setAvailabilityConfirmed(conf !== null);
+    });
+    return () => { cancelled = true; };
+  }, [currentUser.id, confirmationTarget.month, confirmationTarget.year]);
+
+  const handleConfirmAvailabilityUnchanged = async () => {
+    setIsConfirmingAvailability(true);
+    const result = await confirmAvailability(
+      currentUser.id, confirmationTarget.month, confirmationTarget.year, 'confirmed'
+    );
+    setIsConfirmingAvailability(false);
+    if (result.success) {
+      setAvailabilityConfirmed(true);
+      setShowAvailabilityPrompt(false);
+      setToast({ message: 'הזמינות אושרה — תודה!', type: 'success' });
+    } else {
+      setToast({
+        message: 'אישור הזמינות נכשל — נסו שוב',
+        detail: result.error,
+        type: 'error',
+        action: { label: 'נסה שוב', onClick: () => handleConfirmAvailabilityUnchanged() },
+      });
+    }
+  };
+
+  // localStorage key for the edit-form draft (survives tab close, unlike sessionStorage)
   const DRAFT_STORAGE_KEY = `volunteer-draft-${currentUser.id}`;
+  const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-  // Auto-save to sessionStorage every 3 seconds while editing
+  // Auto-save draft to localStorage every 3 seconds while editing.
+  // Only while there are actual changes — a clean form must not leave a draft
+  // behind (it would trigger a misleading "restored unsaved changes" toast
+  // next time). isDirty is declared further down; the tick runs post-render,
+  // so the reference is initialized by the time it's read.
   useEffect(() => {
     if (!isEditing) return;
 
     const saveTimer = setInterval(() => {
       try {
-        sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(editForm));
-        console.log('[VolunteerDashboard] Auto-saved draft to session storage');
+        if (!isDirty) {
+          localStorage.removeItem(DRAFT_STORAGE_KEY);
+          return;
+        }
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), form: editForm }));
+        console.log('[VolunteerDashboard] Auto-saved draft to local storage');
       } catch (error) {
         console.error('[VolunteerDashboard] Failed to auto-save draft:', error);
       }
@@ -66,14 +119,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   useEffect(() => {
     if (isEditing && !hasRestoredDraft) {
       try {
-        const savedDraft = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+        // Migrate any legacy sessionStorage draft (old format: bare form object)
+        const savedDraft = localStorage.getItem(DRAFT_STORAGE_KEY) ?? sessionStorage.getItem(DRAFT_STORAGE_KEY);
+        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
         if (savedDraft) {
-          const draftData = JSON.parse(savedDraft);
-          // Only restore if it's for the same user
-          if (draftData.id === currentUser.id) {
-            setEditForm(draftData);
+          const parsed = JSON.parse(savedDraft);
+          const form = parsed.form ?? parsed;
+          const savedAt = parsed.savedAt ?? Date.now();
+          const expired = Date.now() - savedAt > DRAFT_MAX_AGE_MS;
+          // Only restore if it's for the same user and not stale
+          if (form.id === currentUser.id && !expired) {
+            setEditForm(form);
             setToast({ message: 'Restored unsaved changes from previous session', type: 'success' });
-            console.log('[VolunteerDashboard] Restored draft from session storage');
+            console.log('[VolunteerDashboard] Restored draft from local storage');
+          } else if (expired) {
+            localStorage.removeItem(DRAFT_STORAGE_KEY);
           }
         }
       } catch (error) {
@@ -90,9 +150,9 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     }
   }, [isEditing]);
 
-  // Auto-dismiss toast after 4 seconds
+  // Auto-dismiss toast after 4 seconds; errors stay until dismissed
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.type === 'error') return;
     const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
@@ -110,16 +170,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     setEditForm(currentUser);
   }, [currentUser]);
 
-  // Get minimum selectable date for date picker
-  // Temporarily allow editing the current month (April 2026) since the schedule needs updates
-  const getDefaultMinDate = () => {
-    const today = new Date();
-    if (today.getFullYear() === 2026 && today.getMonth() === 3) { // April 2026
-      return today.toISOString().split('T')[0];
-    }
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    return nextMonth.toISOString().split('T')[0];
-  };
+  // Minimum selectable date for date pickers: volunteers plan the upcoming month
+  const getDefaultMinDate = () => getFirstOfNextMonthStr();
 
   // Switch request state
   const [switchRequests, setSwitchRequests] = useState<ShiftSwitchRequest[]>([]);
@@ -137,6 +189,8 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const [selectedVolunteerProfile, setSelectedVolunteerProfile] = useState<Volunteer | null>(null);
   // Store coworkers for each shift (shift ID -> volunteer list)
   const [shiftCoworkers, setShiftCoworkers] = useState<Record<string, Volunteer[]>>({});
+  // Friday coworkers modal: everyone on that date grouped by opening/closing
+  const [fridayTeam, setFridayTeam] = useState<{ openers: Volunteer[]; closers: Volunteer[] } | null>(null);
 
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<'my-shifts' | 'monthly-schedule'>('my-shifts');
@@ -401,16 +455,27 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const loadCoworkers = async (shift: Shift) => {
     setIsLoadingCoworkers(true);
     setCoworkersShift(shift);
+    setFridayTeam(null);
     setShowCoworkersModal(true);
     try {
-      // Get all assignments for this shift
-      const assignments = await getShiftAssignments([shift.id]);
+      const isFriday = new Date(shift.date).getDay() === 5;
 
-      // Extract volunteer IDs
-      const volunteerIds = assignments.map(a => a.volunteerId);
+      // On Fridays the modal shows the whole day grouped into opening/closing
+      // teams, so volunteers can see who opens and who closes — not just their
+      // own shift's team.
+      const sameDayShifts = isFriday
+        ? [...shifts, ...scheduleShifts]
+            .filter(s => s.date === shift.date)
+            .filter((s, i, arr) => arr.findIndex(x => x.id === s.id) === i)
+        : [shift];
+      const shiftIds = sameDayShifts.length > 0 ? sameDayShifts.map(s => s.id) : [shift.id];
+
+      const assignments = await getShiftAssignments(shiftIds);
+      const volunteerIds = [...new Set(assignments.map(a => a.volunteerId))];
 
       if (volunteerIds.length === 0) {
         setCoworkers([]);
+        if (isFriday) setFridayTeam({ openers: [], closers: [] });
         return;
       }
 
@@ -426,8 +491,36 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         return;
       }
 
-      const volunteers = (data || []).map(mapVolunteerFromDB);
-      setCoworkers(volunteers);
+      const volunteerById = new Map<string, Volunteer>(
+        (data || []).map(row => {
+          const v = mapVolunteerFromDB(row);
+          return [v.id, v];
+        })
+      );
+
+      // The clicked shift's own team (used by the non-Friday list)
+      const clickedShiftVolunteerIds = new Set(
+        assignments.filter(a => a.shiftId === shift.id).map(a => a.volunteerId)
+      );
+      setCoworkers(
+        [...clickedShiftVolunteerIds]
+          .map(id => volunteerById.get(id))
+          .filter((v): v is Volunteer => Boolean(v))
+      );
+
+      if (isFriday) {
+        const shiftById = new Map(sameDayShifts.map(s => [s.id, s]));
+        const openers = new Map<string, Volunteer>();
+        const closers = new Map<string, Volunteer>();
+        assignments.forEach(a => {
+          const s = shiftById.get(a.shiftId);
+          const v = volunteerById.get(a.volunteerId);
+          if (!s || !v) return;
+          // A volunteer doing both opening and closing appears in both groups
+          (isOpeningShift(s) ? openers : closers).set(v.id, v);
+        });
+        setFridayTeam({ openers: [...openers.values()], closers: [...closers.values()] });
+      }
     } catch (error) {
       console.error('Error loading coworkers:', error);
       setCoworkers([]);
@@ -653,11 +746,29 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const now = new Date();
   const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const cutoffDate = new Date(now.getFullYear(), now.getMonth(), lastDayOfMonth.getDate() - SCHEDULE_CUTOFF_DAYS_BEFORE_MONTH_END);
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const updatedThisMonth = currentUser.updatedAt ? new Date(currentUser.updatedAt) >= startOfMonth : false;
   const availabilityPeriodLabel = new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('en-US', { month: 'long' });
+  const availabilityPeriodLabelHebrew = new Date(confirmationTarget.year, confirmationTarget.month - 1, 1).toLocaleDateString('he-IL', { month: 'long' });
   const availabilityDeadlineLabel = cutoffDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-  const needsAvailabilityUpdate = now <= cutoffDate && !updatedThisMonth;
+  // Due until an explicit confirmation exists for the target month (a real save
+  // also records one) — profile-photo edits no longer silence the reminder.
+  const needsAvailabilityUpdate = now <= cutoffDate && availabilityConfirmed === false;
+
+  // First-open prompt: once per session, ask the volunteer to confirm their
+  // availability for the target month without having to fake a save.
+  useEffect(() => {
+    if (!needsAvailabilityUpdate || isEditing) return;
+    try {
+      if (sessionStorage.getItem(availabilityPromptDismissKey)) return;
+    } catch { /* storage unavailable — just show the prompt */ }
+    setShowAvailabilityPrompt(true);
+  }, [needsAvailabilityUpdate, isEditing, availabilityPromptDismissKey]);
+
+  const dismissAvailabilityPrompt = () => {
+    setShowAvailabilityPrompt(false);
+    try {
+      sessionStorage.setItem(availabilityPromptDismissKey, '1');
+    } catch { /* ignore */ }
+  };
 
   // Show open shifts that the volunteer could potentially work
   const openShifts = shifts
@@ -723,6 +834,55 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     openGoogleCalendarForShift(shift);
   };
 
+  // Normalized snapshot of the fields the edit modal can change, for dirty-state comparison
+  const editSnapshot = (v: Volunteer) => JSON.stringify({
+    name: v.name,
+    email: v.email,
+    phone: v.phone,
+    frequency: v.frequency,
+    preferredLocation: v.preferredLocation,
+    preferredDays: [...(v.preferredDays || [])].sort(),
+    blackoutDates: [...(v.blackoutDates || [])].sort(),
+    onlyDates: [...(v.onlyDates || [])].sort(),
+    notes: v.notes || '',
+    avatarUrl: v.avatarUrl || '',
+  });
+
+  const isDirty = useMemo(
+    () => isEditing && editSnapshot(editForm) !== editSnapshot(currentUser),
+    [isEditing, editForm, currentUser]
+  );
+
+  // Warn before the tab closes/refreshes while there are unsaved edits
+  useEffect(() => {
+    if (!isEditing || !isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isEditing, isDirty]);
+
+  const discardDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (e) {
+      console.error('[VolunteerDashboard] Failed to clear draft:', e);
+    }
+  };
+
+  // Close the edit modal, asking about unsaved changes first
+  const requestCloseEditModal = () => {
+    if (isSaving) return;
+    if (isDirty) {
+      setShowDiscardConfirm(true);
+    } else {
+      discardDraft();
+      setIsEditing(false);
+    }
+  };
+
   const handleSave = async () => {
     // Strip past-month dates before saving
     const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
@@ -736,18 +896,24 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     try {
       await updateVolunteer(cleanedForm);
       console.log('[VolunteerDashboard] Save completed successfully');
-      // Clear draft from session storage on successful save
-      try {
-        sessionStorage.removeItem(DRAFT_STORAGE_KEY);
-        console.log('[VolunteerDashboard] Cleared draft from session storage');
-      } catch (e) {
-        console.error('[VolunteerDashboard] Failed to clear draft:', e);
-      }
+      discardDraft();
+      setShowDiscardConfirm(false);
       setIsEditing(false);
       setToast({ message: 'Changes saved successfully', type: 'success' });
+      // A real save also counts as confirming availability for the target month.
+      // Fire-and-forget: a failure here must never fail the save itself.
+      confirmAvailability(currentUser.id, confirmationTarget.month, confirmationTarget.year, 'updated')
+        .then(r => { if (r.success) setAvailabilityConfirmed(true); })
+        .catch(e => console.error('[VolunteerDashboard] Failed to record confirmation:', e));
     } catch (error) {
       console.error('[VolunteerDashboard] Error saving volunteer data:', error);
-      setToast({ message: 'Failed to save changes. Please try again.', type: 'error' });
+      setShowDiscardConfirm(false);
+      setToast({
+        message: 'השמירה נכשלה — השינויים לא נשמרו',
+        detail: error instanceof Error ? error.message : String(error),
+        type: 'error',
+        action: { label: 'נסה שוב', onClick: () => handleSave() },
+      });
     } finally {
       setIsSaving(false);
     }
@@ -869,14 +1035,70 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
     <div className="h-full bg-slate-50 overflow-y-auto">
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all animate-fade-in flex items-center gap-2 ${
+        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all animate-fade-in max-w-sm ${
           toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
         }`}>
-          {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
-          {toast.message}
-          <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
-            <X size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
+            <span dir="auto">{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
+              <X size={14} />
+            </button>
+          </div>
+          {toast.detail && (
+            <p dir="auto" className="mt-1 text-xs text-white/80 break-words">{toast.detail}</p>
+          )}
+          {toast.action && (
+            <button
+              onClick={() => { const a = toast.action; setToast(null); a?.onClick(); }}
+              className="mt-2 px-3 py-1 bg-white/20 hover:bg-white/30 rounded-md text-xs font-semibold"
+            >
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Availability confirmation prompt — first open of the month */}
+      {showAvailabilityPrompt && !isEditing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div dir="rtl" className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative animate-fade-in text-right">
+            <button
+              onClick={dismissAvailabilityPrompt}
+              className="absolute top-4 left-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={20} />
+            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <CalendarCheck size={22} className="text-indigo-600 shrink-0" />
+              <h2 className="text-lg font-bold text-slate-900">
+                האם הזמינות שלך לחודש {availabilityPeriodLabelHebrew} עדכנית?
+              </h2>
+            </div>
+            <p className="text-sm text-slate-600 mb-5">
+              אם לא השתנה כלום, אפשר לאשר בלחיצה אחת — בלי להיכנס ולערוך.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleConfirmAvailabilityUnchanged}
+                disabled={isConfirmingAvailability}
+                className="px-4 py-2.5 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isConfirmingAvailability ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Check size={16} />
+                )}
+                אשר זמינות
+              </button>
+              <button
+                onClick={() => { dismissAvailabilityPrompt(); setEditForm(currentUser); setIsEditing(true); }}
+                className="px-4 py-2.5 text-indigo-700 border border-indigo-200 hover:bg-indigo-50 rounded-lg font-semibold transition-colors"
+              >
+                עדכן פרטים
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -934,12 +1156,21 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors"
-            >
-              Update Availability
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => { setEditForm(currentUser); setIsEditing(true); }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors"
+              >
+                Update Availability
+              </button>
+              <button
+                onClick={handleConfirmAvailabilityUnchanged}
+                disabled={isConfirmingAvailability}
+                className="bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold px-4 py-2.5 rounded-lg text-sm whitespace-nowrap transition-colors disabled:opacity-50"
+              >
+                אשר זמינות ללא שינויים
+              </button>
+            </div>
           </div>
         )}
 
@@ -1439,19 +1670,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                                         <span className="font-semibold truncate text-[10px] sm:text-xs text-slate-800">
                                           {shift.startTime.slice(0,5)}
                                         </span>
-                                        {new Date(dateStr).getDay() === 5 && (() => {
-                                          // Prefer the explicit slot tag; fall back to start-time heuristic.
-                                          const isOpening = shift.shiftSlot
-                                            ? shift.shiftSlot === 'opening'
-                                            : parseInt(shift.startTime.split(':')[0], 10) < 14;
-                                          return (
-                                            <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
-                                              isOpening ? 'bg-amber-200 text-amber-800' : 'bg-violet-200 text-violet-800'
-                                            }`}>
-                                              {isOpening ? 'Opening' : 'Closing'}
-                                            </span>
-                                          );
-                                        })()}
+                                        {new Date(dateStr).getDay() === 5 && (
+                                          <span className={`px-1 py-0 rounded text-[8px] sm:text-[9px] font-bold flex-shrink-0 ${
+                                            isOpeningShift(shift) ? 'bg-amber-200 text-amber-800' : 'bg-violet-200 text-violet-800'
+                                          }`}>
+                                            {isOpeningShift(shift) ? 'Opening' : 'Closing'}
+                                          </span>
+                                        )}
                                         {isMyShift && (
                                           <span className="w-2 h-2 rounded-full bg-indigo-600 flex-shrink-0" title="Your Shift"></span>
                                         )}
@@ -1552,13 +1777,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
       {isEditing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 relative animate-fade-in max-h-[calc(100vh-2rem)] overflow-y-auto">
-            <button 
-              onClick={() => setIsEditing(false)}
+            <button
+              onClick={requestCloseEditModal}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
               <X size={20} />
             </button>
-            
+
             <h2 className="text-xl font-bold text-slate-900 mb-6">Edit Profile & Availability</h2>
 
             {/* Avatar Upload */}
@@ -1777,6 +2002,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               </div>
               <p className="text-xs text-slate-500 mb-2">
                 If you set specific dates here, you will <strong>only</strong> be scheduled on these dates.
+                These dates count even if their weekday is not one of your preferred days.
                 Leave empty to be available on all your preferred days.
               </p>
               <div className="space-y-2 mb-3">
@@ -1846,7 +2072,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
               <button
-                onClick={() => setIsEditing(false)}
+                onClick={requestCloseEditModal}
                 disabled={isSaving}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -1869,6 +2095,40 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
             </div>
 
           </div>
+
+          {/* Unsaved-changes confirmation */}
+          {showDiscardConfirm && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-4">
+              <div dir="rtl" className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 animate-fade-in text-right">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle size={20} className="text-amber-500 shrink-0" />
+                  <h3 className="text-base font-bold text-slate-900">יש שינויים שלא נשמרו — לשמור?</h3>
+                </div>
+                <div className="flex flex-col gap-2 mt-4">
+                  <button
+                    onClick={() => { setShowDiscardConfirm(false); handleSave(); }}
+                    disabled={isSaving}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    שמור
+                  </button>
+                  <button
+                    onClick={() => { setShowDiscardConfirm(false); discardDraft(); setIsEditing(false); }}
+                    disabled={isSaving}
+                    className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium transition-colors disabled:opacity-50"
+                  >
+                    צא בלי לשמור
+                  </button>
+                  <button
+                    onClick={() => setShowDiscardConfirm(false)}
+                    className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+                  >
+                    המשך עריכה
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2023,6 +2283,49 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               <div className="py-8 text-center text-slate-500">
                 <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
                 <p className="text-sm">Loading team members...</p>
+              </div>
+            ) : fridayTeam ? (
+              /* Friday: everyone on this date, grouped so it's clear who opens and who closes */
+              <div className="space-y-4">
+                {[
+                  { label: 'Opening', volunteers: fridayTeam.openers, chipClass: 'bg-amber-200 text-amber-800', avatarClass: 'bg-amber-100 text-amber-700' },
+                  { label: 'Closing', volunteers: fridayTeam.closers, chipClass: 'bg-violet-200 text-violet-800', avatarClass: 'bg-violet-100 text-violet-700' },
+                ].map(group => (
+                  <div key={group.label}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${group.chipClass}`}>{group.label}</span>
+                      <span className="text-xs text-slate-500">
+                        {group.volunteers.length} volunteer{group.volunteers.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    {group.volunteers.length === 0 ? (
+                      <p className="text-sm text-slate-400 italic px-1">No one assigned yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {group.volunteers.map(volunteer => (
+                          <div
+                            key={volunteer.id}
+                            className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${group.avatarClass}`}>
+                                {volunteer.name.charAt(0)}
+                              </div>
+                              <p className="font-medium text-slate-900">{volunteer.name}</p>
+                            </div>
+                            <button
+                              onClick={() => setSelectedVolunteerProfile(volunteer)}
+                              className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition-colors"
+                              title="View profile"
+                            >
+                              <User size={18} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : coworkers.length === 0 ? (
               <div className="py-8 text-center text-slate-500">

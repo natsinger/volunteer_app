@@ -36,9 +36,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const initialSessionLoaded = useRef(false);
 
   useEffect(() => {
+    // Diagnostics for the reported "every refresh lands on the login screen"
+    // bug: the client config persists sessions to localStorage, so if the
+    // session is null here the token was never stored or belongs to another
+    // origin (e.g. a per-deploy Vercel preview URL) — these logs say which.
+    console.log('[Auth] init on origin:', window.location.origin);
+
     // Check active session
     supabase.auth.getSession().then(({ data: { session } }) => {
       initialSessionLoaded.current = true;
+      console.log('[Auth] getSession resolved:', session ? `user ${session.user.id}` : 'NO SESSION (login screen)');
       setUser(session?.user ?? null);
       if (session?.user) {
         checkUserRole(session.user.id);
@@ -51,7 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // to prevent a flash to login screen from a null session event
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[Auth] onAuthStateChange:', event, session ? 'has session' : 'no session');
       if (!initialSessionLoaded.current) return;
       setUser(session?.user ?? null);
       if (session?.user) {
