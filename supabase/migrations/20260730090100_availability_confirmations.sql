@@ -9,8 +9,10 @@
 --      profile touch (avatar, phone) — this table tracks availability freshness
 --      per target month explicitly.
 
+-- gen_random_uuid() is built into Postgres (unlike uuid_generate_v4(), which
+-- lives in the uuid-ossp extension and is not on the CLI migration search path)
 CREATE TABLE IF NOT EXISTS availability_confirmations (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   volunteer_id UUID NOT NULL REFERENCES volunteers(id) ON DELETE CASCADE,
   target_month INTEGER NOT NULL CHECK (target_month BETWEEN 1 AND 12),
   target_year INTEGER NOT NULL CHECK (target_year BETWEEN 2024 AND 2100),
