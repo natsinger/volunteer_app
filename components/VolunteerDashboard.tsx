@@ -91,12 +91,20 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   const DRAFT_STORAGE_KEY = `volunteer-draft-${currentUser.id}`;
   const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-  // Auto-save draft to localStorage every 3 seconds while editing
+  // Auto-save draft to localStorage every 3 seconds while editing.
+  // Only while there are actual changes — a clean form must not leave a draft
+  // behind (it would trigger a misleading "restored unsaved changes" toast
+  // next time). isDirty is declared further down; the tick runs post-render,
+  // so the reference is initialized by the time it's read.
   useEffect(() => {
     if (!isEditing) return;
 
     const saveTimer = setInterval(() => {
       try {
+        if (!isDirty) {
+          localStorage.removeItem(DRAFT_STORAGE_KEY);
+          return;
+        }
         localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), form: editForm }));
         console.log('[VolunteerDashboard] Auto-saved draft to local storage');
       } catch (error) {
@@ -1032,13 +1040,13 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
         }`}>
           <div className="flex items-center gap-2">
             {toast.type === 'success' ? <Check size={16} /> : <X size={16} />}
-            <span>{toast.message}</span>
+            <span dir="auto">{toast.message}</span>
             <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">
               <X size={14} />
             </button>
           </div>
           {toast.detail && (
-            <p className="mt-1 text-xs text-white/80 break-words">{toast.detail}</p>
+            <p dir="auto" className="mt-1 text-xs text-white/80 break-words">{toast.detail}</p>
           )}
           {toast.action && (
             <button

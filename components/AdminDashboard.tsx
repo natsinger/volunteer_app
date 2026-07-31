@@ -263,8 +263,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId
       }));
       setGeneratedAssignments(assignments);
-      // Capture initial state for change detection
-      setInitialAssignments([...assignments]);
       setSelectedOptionId(optionId);
       // A freshly generated option is a draft — not yet in the database — so
       // mark it unapplied. This keeps later manual edits local until the admin
@@ -279,7 +277,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [generatedAssignments, setGeneratedAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
   const [isApplyingAssignments, setIsApplyingAssignments] = useState(false);
   const [assignmentsApplied, setAssignmentsApplied] = useState(false);
-  const [initialAssignments, setInitialAssignments] = useState<{shiftId: string, volunteerId: string}[]>([]);
 
   // Multiple schedule options state
   const [scheduleOptions, setScheduleOptions] = useState<Array<{
@@ -334,7 +331,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         return;
       }
       setGeneratedAssignments(draft.generatedAssignments ?? []);
-      setInitialAssignments(draft.initialAssignments ?? []);
       setScheduleOptions(draft.scheduleOptions ?? []);
       setSelectedOptionId(draft.selectedOptionId ?? null);
       setScheduleResultView(draft.scheduleResultView ?? 'calendar');
@@ -358,7 +354,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           version: DRAFT_VERSION,
           savedAt: Date.now(),
           generatedAssignments,
-          initialAssignments,
           scheduleOptions,
           selectedOptionId,
           scheduleResultView,
@@ -368,7 +363,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [adminDraftKey, assignmentsApplied, generatedAssignments, initialAssignments, scheduleOptions, selectedOptionId, scheduleResultView]);
+  }, [adminDraftKey, assignmentsApplied, generatedAssignments, scheduleOptions, selectedOptionId, scheduleResultView]);
 
   const handleAddRecurringShift = async () => {
     if (!newRecurringShift.title || newRecurringShift.dayOfWeek === undefined) return;
@@ -825,6 +820,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const shiftIds = displayedShifts.map(s => s.id);
     const dbAssignments = await getShiftAssignments(shiftIds);
 
+    // Re-check after the await: the draft-restore effect may have run while
+    // the fetch was in flight (effect ordering on month switch) — a stale
+    // response must not clobber the restored draft
+    if (draftRestoredRef.current) return;
+
     // Convert to the format expected by generatedAssignments
     const assignments = dbAssignments.map(a => ({
       shiftId: a.shiftId,
@@ -928,8 +928,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       setAssignmentsApplied(true);
-      // Capture initial state after applying for change detection
-      setInitialAssignments([...generatedAssignments]);
       // The work is in the DB now — the local draft is no longer needed
       discardAdminDraft();
 
@@ -1035,8 +1033,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     if (result.success && result.scheduleId) {
-      // Update initial assignments to current state for future comparisons
-      setInitialAssignments([...generatedAssignments]);
 
       const action = saveMode === 'update' ? 'updated' : 'saved';
       alert(`Schedule ${action} successfully!`);
@@ -1061,8 +1057,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         volunteerId: a.volunteerId,
       }));
       setGeneratedAssignments(assignments);
-      // Capture initial state for change detection
-      setInitialAssignments([...assignments]);
       setScheduleResultView('calendar');
       setShowScheduleHistory(false);
 
@@ -1703,7 +1697,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     if (confirm('Discard the restored draft? This clears the current unapplied schedule.')) {
                       discardAdminDraft();
                       setGeneratedAssignments([]);
-                      setInitialAssignments([]);
                       setScheduleOptions([]);
                       setSelectedOptionId(null);
                       setScheduleResultView('none');

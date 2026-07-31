@@ -37,12 +37,27 @@ CREATE POLICY "Volunteers can read own confirmations" ON availability_confirmati
     EXISTS (SELECT 1 FROM volunteers WHERE id = volunteer_id AND user_id = auth.uid())
   );
 
+-- Writes are limited to the active scheduling window (current or next month):
+-- the client only ever asks about next month, but the table is reachable over
+-- PostgREST, so without this a volunteer could pre-confirm every future month
+-- and permanently game the admin freshness badge.
 CREATE POLICY "Volunteers can insert own confirmations" ON availability_confirmations
   FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM volunteers WHERE id = volunteer_id AND user_id = auth.uid())
+    AND make_date(target_year, target_month, 1) IN (
+      date_trunc('month', now())::date,
+      (date_trunc('month', now()) + interval '1 month')::date
+    )
   );
 
 CREATE POLICY "Volunteers can update own confirmations" ON availability_confirmations
   FOR UPDATE USING (
     EXISTS (SELECT 1 FROM volunteers WHERE id = volunteer_id AND user_id = auth.uid())
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM volunteers WHERE id = volunteer_id AND user_id = auth.uid())
+    AND make_date(target_year, target_month, 1) IN (
+      date_trunc('month', now())::date,
+      (date_trunc('month', now()) + interval '1 month')::date
+    )
   );
