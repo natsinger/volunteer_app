@@ -2452,7 +2452,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                  <div className="flex-1">
                                    <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
                                    <div className="text-xs text-slate-500">
-                                     {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                     {vol.capacity > 0
+                                       ? `${vol.assignedCount}/${vol.capacity} (${Math.round(vol.utilization)}%)`
+                                       : `${vol.assignedCount} assigned · no matching shifts this month`}
                                    </div>
                                  </div>
                                </div>
@@ -2496,7 +2498,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                        <div className="flex-1">
                                          <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
                                          <div className="text-xs text-slate-500">
-                                           {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                           {vol.capacity > 0
+                                       ? `${vol.assignedCount}/${vol.capacity} (${Math.round(vol.utilization)}%)`
+                                       : `${vol.assignedCount} assigned · no matching shifts this month`}
                                          </div>
                                        </div>
                                      </div>

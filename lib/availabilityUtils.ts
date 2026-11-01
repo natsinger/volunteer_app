@@ -5,8 +5,11 @@
 //
 // Only-dates semantics: a date the volunteer explicitly listed in `onlyDates`
 // ("Days I CAN come") is authoritative — it makes them eligible on that date even
-// if the weekday is not in their preferred days. When `onlyDates` is non-empty,
-// all OTHER dates are ineligible regardless of weekday match. Blackout always wins.
+// if the weekday is not in their preferred days. The restriction is scoped per
+// month: if they listed any dates in a shift's month, only those dates count in
+// that month; months with no listed dates fall back to weekday preferences.
+// (onlyDates is one list spanning months, so an unscoped check would block a
+// volunteer for every month they didn't list dates in.) Blackout always wins.
 import { Shift, Volunteer } from '../types';
 
 /**
@@ -118,14 +121,22 @@ export const getEligibilityIssues = (volunteer: Volunteer, shift: Shift): Eligib
   // Blackout dates always win, even over an explicit only-date
   if (volunteer.blackoutDates.includes(shift.date)) issues.push('blackout');
 
-  if (volunteer.onlyDates.length > 0) {
-    // Only-dates are authoritative: listed date → eligible regardless of weekday
-    // preference; any other date → ineligible regardless of weekday preference.
-    if (!volunteer.onlyDates.includes(shift.date)) issues.push('not_in_only_dates');
+  const shiftMonth = shift.date.slice(0, 7); // YYYY-MM
+  const onlyDatesThisMonth = volunteer.onlyDates.filter(d => d.startsWith(shiftMonth));
+
+  if (onlyDatesThisMonth.length > 0) {
+    // Only-dates are authoritative within their month: listed date → eligible
+    // regardless of weekday; any other date that month → ineligible.
+    if (!onlyDatesThisMonth.includes(shift.date)) issues.push('not_in_only_dates');
   } else {
-    // Weekday preference (uses shift.shiftSlot when set, time-based fallback otherwise)
+    // Weekday preference (uses shift.shiftSlot when set, time-based fallback otherwise).
+    // A plain legacy day code ('2' / '5', from before the Tuesday/Friday split)
+    // matches both slots of that day.
     const dayCode = getShiftDayCode(shift);
-    if (!volunteer.preferredDays.includes(dayCode)) issues.push('day');
+    const baseDay = dayCode.split('_')[0];
+    if (!volunteer.preferredDays.includes(dayCode) && !volunteer.preferredDays.includes(baseDay)) {
+      issues.push('day');
+    }
   }
 
   return issues;
