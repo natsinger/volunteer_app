@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import { mapVolunteerFromDB, mapShiftFromDB } from '../lib/mappers';
 import { uploadAvatar, compressImage } from '../lib/avatarUtils';
 import { generateGoogleCalendarUrl, openGoogleCalendarForShift } from '../lib/googleCalendar';
-import { formatDateDDMMYYYY, formatMonthYear, getFirstOfNextMonthStr } from '../lib/dateUtils';
+import { formatDateDDMMYYYY, formatMonthYear, getFirstOfNextMonthStr, getTodayStr } from '../lib/dateUtils';
 import { canVolunteerWorkShift } from '../services/geminiService';
 import { isOpeningShift } from '../lib/availabilityUtils';
 import { getSchedulingTargetMonth, getMyConfirmation, confirmAvailability } from '../services/availabilityConfirmationService';
@@ -884,12 +884,12 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
   };
 
   const handleSave = async () => {
-    // Strip past-month dates before saving
-    const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+    // Strip past dates before saving (same from-today rule the admin screens use)
+    const todayStr = getTodayStr();
     const cleanedForm = {
       ...editForm,
-      blackoutDates: editForm.blackoutDates.filter(d => d >= currentMonthStart),
-      onlyDates: editForm.onlyDates.filter(d => d >= currentMonthStart),
+      blackoutDates: editForm.blackoutDates.filter(d => d >= todayStr),
+      onlyDates: editForm.onlyDates.filter(d => d >= todayStr),
     };
     console.log('[VolunteerDashboard] Saving changes...', cleanedForm);
     setIsSaving(true);
@@ -1972,7 +1972,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
               
               <div className="flex flex-wrap gap-2">
                 {editForm.blackoutDates
-                  .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                  .filter(d => d >= getTodayStr())
                   .map(date => (
                   <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded-md text-sm">
                     {date}
@@ -1981,7 +1981,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                     </button>
                   </span>
                 ))}
-                {editForm.blackoutDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
+                {editForm.blackoutDates.filter(d => d >= getTodayStr()).length === 0 && (
                   <span className="text-slate-400 text-sm italic">No dates marked unavailable</span>
                 )}
               </div>
@@ -2037,7 +2037,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
 
               <div className="flex flex-wrap gap-2">
                 {editForm.onlyDates
-                  .filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+                  .filter(d => d >= getTodayStr())
                   .map(date => (
                   <span key={date} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md text-sm">
                     {date}
@@ -2046,7 +2046,7 @@ const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({ currentUser, sh
                     </button>
                   </span>
                 ))}
-                {editForm.onlyDates.filter(d => d >= `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`).length === 0 && (
+                {editForm.onlyDates.filter(d => d >= getTodayStr()).length === 0 && (
                   <span className="text-slate-400 text-sm italic">Available on all preferred days (no restrictions)</span>
                 )}
               </div>
