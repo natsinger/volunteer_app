@@ -131,10 +131,14 @@ export const getEligibilityIssues = (volunteer: Volunteer, shift: Shift): Eligib
   } else {
     // Weekday preference (uses shift.shiftSlot when set, time-based fallback otherwise).
     // A plain legacy day code ('2' / '5', from before the Tuesday/Friday split)
-    // matches both slots of that day.
+    // matches both slots of that day — but only when the volunteer hasn't picked
+    // a slot for it. Many profiles hold both '5' and '5_opening'; there the
+    // explicit slot is their real choice and the stale '5' must not add closing.
     const dayCode = getShiftDayCode(shift);
     const baseDay = dayCode.split('_')[0];
-    if (!volunteer.preferredDays.includes(dayCode) && !volunteer.preferredDays.includes(baseDay)) {
+    const hasExplicitSlot = volunteer.preferredDays.some(d => d.startsWith(`${baseDay}_`));
+    const legacyMatch = !hasExplicitSlot && volunteer.preferredDays.includes(baseDay);
+    if (!volunteer.preferredDays.includes(dayCode) && !legacyMatch) {
       issues.push('day');
     }
   }
