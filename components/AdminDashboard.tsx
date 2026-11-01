@@ -1450,19 +1450,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             Blocked all of {targetMonthName}
                           </div>
                         )}
-                        {vol.blackoutDates && vol.blackoutDates.length > 0 && (
-                          <div className="text-xs text-red-500 mb-1" title={vol.blackoutDates.join(', ')}>
-                            {vol.blackoutDates.length} blackout dates
-                          </div>
-                        )}
-                        {vol.onlyDates && vol.onlyDates.length > 0 && (
-                          <div className="text-xs text-green-600" title={vol.onlyDates.join(', ')}>
-                            Only: {vol.onlyDates.length} specific dates
-                          </div>
-                        )}
-                        {(!vol.blackoutDates?.length && !vol.onlyDates?.length) && (
-                          <span className="text-xs text-slate-400">None</span>
-                        )}
+                        {(() => {
+                          // Same "from today on" rule as the edit window, so both
+                          // screens always show the same blocked/allowed dates
+                          const todayStr = getTodayStr();
+                          const upcomingBlackouts = (vol.blackoutDates || []).filter(d => d >= todayStr);
+                          const upcomingOnlyDates = (vol.onlyDates || []).filter(d => d >= todayStr);
+                          return (
+                            <>
+                              {upcomingBlackouts.length > 0 && (
+                                <div className="text-xs text-red-500 mb-1" title={upcomingBlackouts.join(', ')}>
+                                  {upcomingBlackouts.length} blackout dates
+                                </div>
+                              )}
+                              {upcomingOnlyDates.length > 0 && (
+                                <div className="text-xs text-green-600" title={upcomingOnlyDates.join(', ')}>
+                                  Only: {upcomingOnlyDates.length} specific dates
+                                </div>
+                              )}
+                              {upcomingBlackouts.length === 0 && upcomingOnlyDates.length === 0 && (
+                                <span className="text-xs text-slate-400">None</span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-2">
@@ -2452,7 +2463,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                  <div className="flex-1">
                                    <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
                                    <div className="text-xs text-slate-500">
-                                     {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                     {vol.capacity > 0
+                                       ? `${vol.assignedCount}/${vol.capacity} (${Math.round(vol.utilization)}%)`
+                                       : `${vol.assignedCount} assigned · no matching shifts this month`}
                                    </div>
                                  </div>
                                </div>
@@ -2496,7 +2509,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                        <div className="flex-1">
                                          <span className="font-medium text-slate-900 text-sm">{vol.name}</span>
                                          <div className="text-xs text-slate-500">
-                                           {vol.assignedCount}/{vol.capacity} ({Math.round(vol.utilization)}%)
+                                           {vol.capacity > 0
+                                       ? `${vol.assignedCount}/${vol.capacity} (${Math.round(vol.utilization)}%)`
+                                       : `${vol.assignedCount} assigned · no matching shifts this month`}
                                          </div>
                                        </div>
                                      </div>

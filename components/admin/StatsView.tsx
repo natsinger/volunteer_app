@@ -142,6 +142,14 @@ const StatsView: React.FC<StatsViewProps> = ({
                     </span> / {vol.capacity}
                   </td>
                   <td className="px-6 py-4 w-1/3">
+                    {vol.capacity === 0 ? (
+                      <span
+                        className={`text-xs font-medium ${vol.assignedCount > 0 ? 'text-amber-700' : 'text-slate-400'}`}
+                        title="None of this month's shifts match this volunteer's days, location or dates"
+                      >
+                        {vol.assignedCount > 0 ? 'Assigned outside their availability' : 'No matching shifts this month'}
+                      </span>
+                    ) : (
                     <div className="flex items-center gap-3">
                       <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div
@@ -157,6 +165,7 @@ const StatsView: React.FC<StatsViewProps> = ({
                         {Math.round(vol.percentage)}%
                       </span>
                     </div>
+                    )}
                   </td>
                 </tr>
                 {expandedVolunteerId === vol.id && (
